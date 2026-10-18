@@ -43,13 +43,17 @@ def queries(expected_nodes):
     selector = '{job="proxmox",mountpoint="/",fstype!~"rootfs|tmpfs|overlay"}'
     free = 'node_filesystem_avail_bytes' + selector
     size = 'node_filesystem_size_bytes' + selector
+    current_hosts = f'group by (host) ({up})'
+    history_by_host = f'avg by (host) (avg_over_time({up}[24h]))'
+    current_history = f'({history_by_host}) and on (host) {current_hosts}'
     return {
         "cpuPercent": f'100 * (1 - avg({cpu})) and (count(count by (instance) ({cpu})) == {expected_nodes}) and ({complete})',
         "memoryPercent": f'100 * (1 - sum({available}) / sum({total})) and (count({available}) == {expected_nodes}) and (count({total}) == {expected_nodes}) and ({complete})',
         "storagePercent": f'100 * (1 - sum({free}) / sum({size})) and (count({free}) == {expected_nodes}) and (count({size}) == {expected_nodes}) and ({complete})',
         # Exporter scrape success over observed samples in the last 24 hours.
-        # A new installation has less history; this is not application uptime.
-        "availabilityPercent": f'100 * avg(avg_over_time({up}[24h])) and (count({up}) == {expected_nodes}) and (count(avg_over_time({up}[24h])) == {expected_nodes})',
+        # Current host labels exclude retired target IPs from the range. This is
+        # not application uptime, and a fresh installation has less history.
+        "availabilityPercent": f'100 * avg({current_history}) and (count({current_hosts}) == {expected_nodes}) and (count({current_history}) == {expected_nodes})',
     }
 
 
