@@ -29,13 +29,13 @@ collector refreshes on startup, then waits 60 seconds after each collection.
 Requests only read the in-memory snapshot, so traffic does not multiply queries
 against Prometheus. Restarting starts with unknown values until the first result.
 
-| Field                 | Meaning                                                                                                                                                                                                                                              |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cpuPercent`          | Five-minute mean CPU busy percentage across the Proxmox host CPUs, weighted by CPU count.                                                                                                                                                            |
-| `memoryPercent`       | Capacity-weighted used memory, calculated from `MemAvailable` and `MemTotal` on the Proxmox hosts.                                                                                                                                                   |
-| `storagePercent`      | Capacity-weighted unavailable space on the hosts' **root filesystems only**, using filesystem available bytes. This is not local-lvm, ZFS pool, NAS, or guest-volume capacity.                                                                       |
-| `availabilityPercent` | Mean host-exporter scrape success over observed samples in the previous 24 hours, grouped by current hosts so retired target IPs do not add extra series. It is not application uptime; a fresh Prometheus installation has less than 24 hours of history.                                                                   |
-| `checks`              | The configured public HTTPS entry points: 2xx/3xx is `operational`, other HTTP status codes are `degraded`. Transport/DNS/TLS errors cause stale/unknown results. Redirect destinations and authenticated application functionality are not checked. |
+| Field                 | Meaning                                                                                                                                                                                                                                                    |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cpuPercent`          | Five-minute mean CPU busy percentage across the Proxmox host CPUs, weighted by CPU count.                                                                                                                                                                  |
+| `memoryPercent`       | Capacity-weighted used memory, calculated from `MemAvailable` and `MemTotal` on the Proxmox hosts.                                                                                                                                                         |
+| `storagePercent`      | Capacity-weighted unavailable space on the hosts' **root filesystems only**, using filesystem available bytes. This is not local-lvm, ZFS pool, NAS, or guest-volume capacity.                                                                             |
+| `availabilityPercent` | Mean host-exporter scrape success over observed samples in the previous 24 hours, grouped by current hosts so retired target IPs do not add extra series. It is not application uptime; a fresh Prometheus installation has less than 24 hours of history. |
+| `checks`              | The configured public HTTPS entry points: 2xx/3xx is `operational`, other HTTP status codes are `degraded`. Transport/DNS/TLS errors cause stale/unknown results. Redirect destinations and authenticated application functionality are not checked.       |
 
 All resource queries select `job="proxmox"`. The playbook installs the native
 Debian node-exporter package on those hosts, so the Docker/LXC exporters' `/rootfs`
@@ -58,10 +58,26 @@ configured for these checks. Add a real job/status source before displaying them
   "updatedAt": "2026-10-18T16:00:00Z",
   "stale": false,
   "fleet": {
-    "cpuPercent": { "value": 32.4, "state": "fresh", "updatedAt": "2026-10-18T16:00:00Z" },
-    "memoryPercent": { "value": 68.2, "state": "fresh", "updatedAt": "2026-10-18T16:00:00Z" },
-    "storagePercent": { "value": 54.1, "state": "fresh", "updatedAt": "2026-10-18T16:00:00Z" },
-    "availabilityPercent": { "value": 99.9, "state": "fresh", "updatedAt": "2026-10-18T16:00:00Z" }
+    "cpuPercent": {
+      "value": 32.4,
+      "state": "fresh",
+      "updatedAt": "2026-10-18T16:00:00Z"
+    },
+    "memoryPercent": {
+      "value": 68.2,
+      "state": "fresh",
+      "updatedAt": "2026-10-18T16:00:00Z"
+    },
+    "storagePercent": {
+      "value": 54.1,
+      "state": "fresh",
+      "updatedAt": "2026-10-18T16:00:00Z"
+    },
+    "availabilityPercent": {
+      "value": 99.9,
+      "state": "fresh",
+      "updatedAt": "2026-10-18T16:00:00Z"
+    }
   },
   "checks": [
     {
