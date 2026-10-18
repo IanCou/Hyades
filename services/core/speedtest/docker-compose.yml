@@ -1,0 +1,24 @@
+services:
+  speedtest-tracker:
+    image: lscr.io/linuxserver/speedtest-tracker:latest
+    container_name: speedtest-tracker
+    restart: unless-stopped
+    ports:
+      - "8765:80"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+      - DISPLAY_TIMEZONE=America/New_York
+      - APP_KEY=${APP_KEY}
+      - APP_URL=https://speedtest.example.com
+      - DB_CONNECTION=sqlite
+      - SPEEDTEST_SCHEDULE=0 * * * *   # once an hour
+      - PRUNE_RESULTS_OLDER_THAN=90    # days
+    volumes:
+      - /data/speedtest:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "1"

@@ -1,0 +1,4 @@
+runner_version: "2.323.0"
+runner_install_dir: /opt/github-runner
+runner_user: root # fine for a homelab LXC
+runner_labels: homelab

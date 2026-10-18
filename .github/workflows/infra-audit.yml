@@ -1,0 +1,38 @@
+name: Infra Audit
+
+# Scheduled drift detection: reconciles live infra state against what git
+# says it should be (scripts/audit_infra.py via playbooks/audit-infra.yml).
+# Runs read-only, posts findings to ntfy.
+#
+# Added 2026-07 after a Portainer "git repository" stack quietly ran
+# duplicate Authentik/Tailscale/Vaultwarden containers on the portainer host
+# for ~2 months, undetected, see
+# docusaurus/docs/coe/2026-07-14-portainer-stray-git-stack.md. The existing
+# orphan check only looked at /opt/services/* on disk, which that incident
+# never touched. audit_infra.py's container-drift check (added in the same
+# fix) diffs *actual* `docker ps` state instead, and this workflow is what
+# makes sure that check actually runs on a cadence instead of depending on
+# someone remembering to invoke it by hand.
+
+on:
+  schedule:
+    - cron: "17 9 * * *" # ~daily, off-the-hour to avoid GitHub's cron pile-up
+  workflow_dispatch: {} # manual trigger for on-demand checks
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    # Runs only where the HOMELAB_RUNNER repo variable is set (the private source
+    # repo). The public Hyades snapshot has no runner or secrets, so it skips.
+    if: vars.HOMELAB_RUNNER == 'true'
+    runs-on: self-hosted # needs SSH to every Proxmox node + docker host, and the runner-local vault file
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run infra audit
+        working-directory: ansible
+        run: |
+          export ANSIBLE_VAULT_PASSWORD_FILE="$HOME/.ansible_vault_password"
+          ansible-playbook playbooks/audit-infra.yml

@@ -1,0 +1,66 @@
+# Provision the `dev` LXC for interactive work: Node.js + Claude Code CLI +
+# everyday CLI tools. Docker itself comes from the shared docker role
+# (playbooks/docker.yml); this playbook is just the "workstation" layer.
+#
+# Usage:
+#   ansible-playbook playbooks/devbox.yml -l dev
+---
+- name: Provision dev box (Node.js, Claude Code, CLI tools)
+  hosts: dev
+  become: true
+
+  tasks:
+    - name: Install prerequisites
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+        state: present
+        update_cache: true
+
+    - name: Add NodeSource GPG key
+      ansible.builtin.apt_key:
+        url: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+        keyring: /etc/apt/keyrings/nodesource.gpg
+        state: present
+
+    - name: Add NodeSource apt repository (Node.js 22.x)
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main"
+        filename: nodesource
+        state: present
+
+    - name: Install Node.js and everyday CLI tools
+      ansible.builtin.apt:
+        name:
+          - nodejs
+          - git
+          - tmux
+          - ripgrep
+          - fd-find
+          - bat
+          - build-essential
+        state: present
+        update_cache: true
+
+    # Debian's fd-find/bat packages ship binaries as fdfind/batcat, a
+    # naming collision with pre-existing unrelated packages on Debian.
+    # Symlink to the upstream names so `fd`/`bat` work as expected.
+    - name: Symlink fdfind -> fd
+      ansible.builtin.file:
+        src: /usr/bin/fdfind
+        dest: /usr/local/bin/fd
+        state: link
+
+    - name: Symlink batcat -> bat
+      ansible.builtin.file:
+        src: /usr/bin/batcat
+        dest: /usr/local/bin/bat
+        state: link
+
+    - name: Install Claude Code CLI
+      community.general.npm:
+        name: "@anthropic-ai/claude-code"
+        global: true
+        state: present

@@ -1,0 +1,28 @@
+# Install cloudflared on appdev00 so the People Portal staging stack is
+# publicly reachable without port forwarding.
+#
+# Deliberately its own tunnel rather than a route on the caddy tunnel: staging
+# is built with weaker isolation than the rest of the estate, so it should not
+# share a path with the personal services. Killing this tunnel takes down
+# staging and nothing else.
+#
+# Ingress is remotely managed (config_src: cloudflare), so the hostname map
+# lives in the Zero Trust dashboard, not here:
+#   app-auth.example.com -> http://localhost:9000  (Authentik)
+#   app-corp.example.com -> http://localhost:3000  (People Portal)
+#
+# Names are flat rather than nested under appdev.example.com because
+# Cloudflare Universal SSL only covers one label deep, and subdomain zones are
+# Enterprise-only.
+#
+# Requires vault_cloudflare_appdev00_tunnel_token in group_vars/all/vault.yml.
+#
+# Usage: ansible-playbook playbooks/cloudflared-appdev00.yml
+---
+- name: Set up cloudflared tunnel on appdev00
+  hosts: appdev00
+  become: true
+  roles:
+    - role: cloudflared
+      vars:
+        cloudflared_tunnel_token: "{{ vault_cloudflare_appdev00_tunnel_token }}"

@@ -1,0 +1,5 @@
+# Copy to terraform.tfvars and fill in; do NOT commit terraform.tfvars
+proxmox_endpoint  = "https://10.0.0.10:8006/"
+proxmox_api_token = "terraform@pve!homelab=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+ssh_public_key    = "ssh-ed25519 AAAA... you@machine"
+gateway           = "10.0.0.1"

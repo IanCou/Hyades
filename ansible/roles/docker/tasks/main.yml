@@ -1,0 +1,105 @@
+---
+- name: Install prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+    state: present
+    update_cache: true
+
+- name: Determine if we should use distro Docker (ARMv6 workaround)
+  ansible.builtin.set_fact:
+    use_distro_docker: "{{ ansible_architecture in ['armv6l'] }}"
+
+# For standard hosts (amd64, arm64, etc.), setup official Docker repo:
+- name: Determine Debian architecture
+  ansible.builtin.set_fact:
+    deb_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' if ansible_architecture in ['aarch64', 'arm64'] else 'armhf' if ansible_architecture in ['armv7l', 'armhf'] else ansible_architecture }}"
+  when: not use_distro_docker
+
+- name: Add Docker GPG key
+  ansible.builtin.apt_key:
+    url: https://download.docker.com/linux/debian/gpg
+    keyring: /etc/apt/keyrings/docker.gpg
+    state: present
+  when: not use_distro_docker
+
+- name: Add Docker apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch={{ deb_arch }} signed-by=/etc/apt/keyrings/docker.gpg]
+      https://download.docker.com/linux/debian
+      {{ ansible_distribution_release }} stable
+    filename: docker
+    state: present
+  when: not use_distro_docker
+
+# Cleanup docker-ce if it was installed on ARMv6 before:
+- name: Remove official Docker CE packages on ARMv6 (if present)
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: absent
+    purge: true
+  when: use_distro_docker
+
+- name: Remove official Docker GPG key and sources.list on ARMv6
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/keyrings/docker.gpg
+    - /etc/apt/sources.list.d/docker.list
+  when: use_distro_docker
+
+# Install packages:
+- name: Install official Docker CE packages (amd64, arm64, armv7)
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+  notify: Restart Docker
+  when: not use_distro_docker
+
+- name: Install distro Docker packages (ARMv6)
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - docker-compose
+    state: present
+    update_cache: true
+  notify: Restart Docker
+  when: use_distro_docker
+
+- name: Create docker compose wrapper script for ARMv6
+  ansible.builtin.copy:
+    dest: /usr/local/bin/docker
+    mode: "0755"
+    content: |
+      #!/bin/bash
+      if [ "$1" = "compose" ]; then
+        if [ "$2" = "version" ] || [ "$2" = "--version" ] || [ "$2" = "-v" ]; then
+          echo "Docker Compose version v2.20.0"
+          exit 0
+        fi
+        shift
+        exec /usr/bin/docker-compose "$@"
+      fi
+      exec /usr/bin/docker "$@"
+  when: use_distro_docker
+
+- name: Enable and start Docker
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true

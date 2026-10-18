@@ -1,0 +1,41 @@
+# Smoke-test a deployed service: SSH reachable + containers running + (optional) HTTP route.
+#
+# Usage:
+#   ansible-playbook playbooks/verify.yml -l <service>
+#   make verify service=<service>
+# Optional HTTP check of the public route (from the control host):
+#   ansible-playbook playbooks/verify.yml -l <service> -e url=https://<service>.example.com
+#
+# Read-only: it never changes anything. The 'service' var comes from inventory.
+---
+- name: Verify service
+  hosts: "{{ target | default('docker_hosts') }}"
+  gather_facts: false
+  vars:
+    deploy_dir: "/opt/services/{{ service }}"
+
+  tasks:
+    - name: Host is reachable over SSH
+      ansible.builtin.ping:
+
+    - name: Compose stack has running containers
+      ansible.builtin.command:
+        cmd: "docker compose -f {{ deploy_dir }}/docker-compose.yml ps --status running --quiet"
+      register: ps
+      changed_when: false
+      failed_when: ps.stdout_lines | length == 0
+
+    - name: Report running containers
+      ansible.builtin.debug:
+        msg: "{{ service }}: {{ ps.stdout_lines | length }} container(s) running in {{ deploy_dir }}"
+
+    # Optional end-to-end check: resolves DNS (AdGuard) -> Caddy -> service.
+    # 401/403 still count: it means Caddy + the app answered (auth-gated).
+    - name: Public route responds (when url is provided)
+      ansible.builtin.uri:
+        url: "{{ url }}"
+        status_code: [200, 301, 302, 401, 403]
+        validate_certs: true
+      delegate_to: localhost
+      run_once: true
+      when: url is defined and (url | length > 0)

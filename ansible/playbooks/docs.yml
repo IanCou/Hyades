@@ -1,0 +1,52 @@
+# Deploy Docusaurus docs site.
+#
+# Syncs the whole /docusaurus source tree (Dockerfile + compose + source)
+# to the target LXC, then builds and runs. Build runs on target (~1-2 min
+# first time, cached thereafter). Excludes node_modules, build, .docusaurus.
+#
+# Usage:
+#   ansible-playbook playbooks/docs.yml
+---
+- name: Deploy docs site
+  hosts: docs
+  become: true
+
+  vars:
+    service_src: "{{ playbook_dir }}/../../docusaurus"
+    deploy_dir: "/opt/services/docs"
+
+  tasks:
+    - name: Ensure rsync is installed (needed by synchronize)
+      ansible.builtin.apt:
+        name: rsync
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Ensure service directory exists
+      ansible.builtin.file:
+        path: "{{ deploy_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Sync docusaurus source
+      ansible.posix.synchronize:
+        src: "{{ service_src }}/"
+        dest: "{{ deploy_dir }}/"
+        delete: true
+        recursive: true
+        rsync_opts:
+          - "--exclude=node_modules"
+          - "--exclude=build"
+          - "--exclude=.docusaurus"
+          - "--exclude=.git"
+      # LXC logs in as root directly; sudo isn't installed and synchronize
+      # would prepend `sudo -u root rsync` under the play-level become.
+      become: false
+
+    - name: Build image and start stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ deploy_dir }}"
+        state: present
+        remove_orphans: true
+        build: always

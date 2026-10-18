@@ -1,0 +1,31 @@
+.DS_Store
+.env
+node_modules/
+*.log
+secrets/
+__pycache__/
+*.pyc
+
+# Stray artifact from AI-agent tooling that sometimes writes to a literal,
+# unexpanded $HOME path when run with this repo as cwd; never real repo content.
+$HOME/
+
+# Terraform
+**/.terraform/
+*.tfvars
+*.tfstate
+*.tfstate.backup
+*.tfstate.*.backup
+.terraform.tfstate.lock.info
+crash.log
+
+# Ansible
+ansible/.vault_password
+ansible/group_vars/all/vault.yml
+# Local agent settings and credential-shaped files
+.claude/settings.local.json
+*.pem
+*.key
+id_*
+.env.*
+!.env.example

@@ -1,0 +1,8 @@
+services:
+  docs:
+    build: .
+    image: homelab/docs:latest
+    container_name: docs
+    restart: unless-stopped
+    ports:
+      - "80:80"

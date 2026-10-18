@@ -1,0 +1,29 @@
+version: '3.8'
+services:
+  tailscale:
+    # Pin deliberately: latest left this on 1.98.8 while clients reached 1.102-1.104.
+    # A bump redeploys the primary router; merge from LAN or while the Pi carries routes.
+    image: tailscale/tailscale:v1.104.1
+    container_name: tailscaled
+    hostname: vpn-gateway
+    network_mode: host # Required for subnet routing
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - /data/tailscale:/home/tailscale
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - TS_STATE_DIR=/home/tailscale
+      - TS_ROUTES=10.0.0.0/22,fd00:db8::/64 # LAN v4 + Deco's stable ULA v6 prefix
+      - TS_EXTRA_ARGS=--advertise-exit-node
+      - TS_ACCEPT_DNS=false # Keep tailnet DNS settings from replacing the container resolver
+    # When a client uses this node as an exit node, Tailscale makes the exit
+    # node the resolver for that client. tailscaled forwards those queries to
+    # the container's resolv.conf, which otherwise inherits the LXC's ISP DNS,
+    # so exit-node clients bypass AdGuard. Point it at AdGuard so they get
+    # filtering + local rewrites. (adguard LXC first, raspberrypi as fallback.)
+    dns:
+      - 10.0.1.16
+      - 10.0.0.3
+    restart: unless-stopped

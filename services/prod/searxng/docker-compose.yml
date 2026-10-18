@@ -1,0 +1,17 @@
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - SEARXNG_BASE_URL=https://searxng.example.com/
+      - SEARXNG_SECRET=${SEARXNG_SECRET}
+    volumes:
+      - /data/searxng:/etc/searxng:rw
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "1"

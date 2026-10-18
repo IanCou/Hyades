@@ -1,0 +1,99 @@
+---
+# Deploys the Portainer agent and registers this host as an environment in Portainer.
+# Requires vars:
+#   portainer_url:           e.g. https://10.0.1.12:9443
+#   vault_portainer_user:    Portainer admin username
+#   vault_portainer_password
+
+- name: Create agent data directory
+  ansible.builtin.file:
+    path: /opt/services/portainer-agent
+    state: directory
+    mode: "0755"
+
+- name: Copy agent compose file
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../services/core/portainer/agent-compose.yml"
+    dest: /opt/services/portainer-agent/docker-compose.yml
+    mode: "0644"
+
+- name: Start portainer agent
+  community.docker.docker_compose_v2:
+    project_src: /opt/services/portainer-agent
+    state: present
+    remove_orphans: true
+    pull: always
+
+- name: Wait for agent to be ready
+  ansible.builtin.wait_for:
+    port: 9001
+    timeout: 30
+
+- name: Cache portainer credentials as host facts
+  ansible.builtin.set_fact:
+    _portainer_user: "{{ vault_portainer_user }}"
+    _portainer_password: "{{ vault_portainer_password }}"
+  no_log: true
+
+- name: Authenticate with Portainer
+  ansible.builtin.uri:
+    url: "{{ portainer_url }}/api/auth"
+    method: POST
+    body_format: json
+    body: "{{ {'Username': _portainer_user, 'Password': _portainer_password} }}"
+    validate_certs: false
+    status_code: 200
+  register: portainer_auth
+  retries: 5
+  delay: 5
+  until: portainer_auth.status == 200
+
+- name: List existing Portainer environments
+  ansible.builtin.uri:
+    url: "{{ portainer_url }}/api/endpoints"
+    headers:
+      Authorization: "Bearer {{ portainer_auth.json.jwt }}"
+    validate_certs: false
+  register: portainer_endpoints
+
+- name: Find existing endpoint ID for this host
+  ansible.builtin.set_fact:
+    _existing_endpoint: >-
+      {{
+        portainer_endpoints.json
+        | selectattr('Name', 'equalto', inventory_hostname)
+        | list | first | default({})
+      }}
+
+- name: Register this host as a Portainer environment
+  ansible.builtin.uri:
+    url: "{{ portainer_url }}/api/endpoints"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ portainer_auth.json.jwt }}"
+    body_format: form-multipart
+    body:
+      Name: "{{ inventory_hostname }}"
+      EndpointCreationType: "2"       # 2 = agent
+      URL: "tcp://{{ ansible_host }}:9001"
+      TLS: "true"
+      TLSSkipVerify: "true"
+      TLSSkipClientVerify: "true"
+    validate_certs: false
+    status_code: 200
+  when: _existing_endpoint == {}
+
+- name: Update URL for existing Portainer environment
+  ansible.builtin.uri:
+    url: "{{ portainer_url }}/api/endpoints/{{ _existing_endpoint.Id }}"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ portainer_auth.json.jwt }}"
+    body_format: json
+    body:
+      URL: "tcp://{{ ansible_host }}:9001"
+      TLSSkipVerify: true
+      TLSSkipClientVerify: true
+    validate_certs: false
+    status_code: 200
+  when: _existing_endpoint != {}

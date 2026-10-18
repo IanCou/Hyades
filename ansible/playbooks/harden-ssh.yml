@@ -1,0 +1,30 @@
+---
+# Hardens SSH on all LXCs:
+#   - Disables password authentication (key-only)
+#   - Disables root password login (key-only root remains for Terraform)
+#   - Restarts sshd
+#
+# Run: ansible-playbook playbooks/harden-ssh.yml
+- name: Harden SSH on all LXCs
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Disable SSH password authentication
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+        state: present
+
+    - name: Enforce root login by key only
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitRootLogin'
+        line: 'PermitRootLogin prohibit-password'
+        state: present
+
+    - name: Restart sshd
+      service:
+        name: sshd
+        state: restarted

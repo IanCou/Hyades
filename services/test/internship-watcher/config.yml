@@ -1,0 +1,183 @@
+# Seed config, imported on deploy (upsert by name: safe to re-run).
+# The database is the source of truth after that; edit via the web UI/CLI
+# and re-export if you want to update this file.
+channels:
+  ntfy-main:
+    url: "ntfys://${NTFY_TOKEN}@ntfy.example.com/simplify-internships"
+  discord-jobs:
+    url: "discord://${DISCORD_WEBHOOK_ID}/${DISCORD_WEBHOOK_TOKEN}"
+
+watches:
+  - name: simplify-google-internships
+    repo: SimplifyJobs/Summer2026-Internships
+    branch: dev
+    interval: 60
+    channels: [ntfy-main, discord-jobs]
+    filters:
+      files:
+        include: ["**/listings.json"]
+      diff:
+        include:
+          - '(?i)\bGoogle\b'
+          - '(?i)deepmind'
+          - '(?i)\bMeta\b'
+          - '(?i)\bAmazon\b'
+          - '(?i)\bDatabricks\b'
+          - '(?i)Capital ?One'
+          - '(?i)\bMicrosoft\b'
+          - '(?i)\bApple\b'
+          - '(?i)\bNetflix\b'
+          - '(?i)\bNvidia\b'
+          - '(?i)\bSalesforce\b'
+          - '(?i)\bAirbnb\b'
+          - '(?i)\bStripe\b'
+          - '(?i)\bUber\b'
+          - '(?i)\bLyft\b'
+          - '(?i)\bPinterest\b'
+          - '(?i)\bNotion\b'
+          - '(?i)\bFigma\b'
+          - '(?i)\bAnthropic\b'
+          - '(?i)\bOpenAI\b'
+          - '(?i)\bPalantir\b'
+          - '(?i)\bSnowflake\b'
+          - '(?i)\bCloudflare\b'
+          - '(?i)\bDoorDash\b'
+          - '(?i)\bRobinhood\b'
+    template:
+      title: "Internship match: {{ matched_keywords | join(', ') }}"
+      body: |-
+        {% if matched_urls %}{{ matched_urls | join(', ') }}{% else %}{{ commit.url }}{% endif %}
+
+        {{ commit.message_first_line }}, {{ commit.author }} · {{ commit.short_sha }}
+
+  # Summer 2027 cycle. SimplifyJobs has no 2027 repo yet (still on Summer2026);
+  # vanshb03/Summer2027-Internships is the confirmed active tracker instead.
+  # Its data lives in README.md as a markdown table (Company | Role | Location |
+  # Link | Date), not listings.json. Company-name only; no location filter.
+  # Broad-but-not-exhaustive big-tech list.
+  - name: sf-bigtech-summer2027
+    repo: vanshb03/Summer2027-Internships
+    branch: dev
+    interval: 300
+    channels: [ntfy-main, discord-jobs]
+    filters:
+      files:
+        include: ["README.md"]
+      diff:
+        include:
+          - '(?i)\bGoogle\b'
+          - '(?i)\bMeta\b'
+          - '(?i)\bAmazon\b'
+          - '(?i)\bDatabricks\b'
+          - '(?i)Capital ?One'
+          - '(?i)\bMicrosoft\b'
+          - '(?i)\bApple\b'
+          - '(?i)\bNetflix\b'
+          - '(?i)\bNvidia\b'
+          - '(?i)\bSalesforce\b'
+          - '(?i)\bAirbnb\b'
+          - '(?i)\bStripe\b'
+          - '(?i)\bUber\b'
+          - '(?i)\bLyft\b'
+          - '(?i)\bPinterest\b'
+          - '(?i)\bNotion\b'
+          - '(?i)\bFigma\b'
+          - '(?i)\bAnthropic\b'
+          - '(?i)\bOpenAI\b'
+          - '(?i)\bPalantir\b'
+          - '(?i)\bSnowflake\b'
+          - '(?i)\bCloudflare\b'
+          - '(?i)\bDoorDash\b'
+          - '(?i)\bRobinhood\b'
+    template:
+      title: "Internship: {{ matched_keywords | join(', ') }}"
+      body: |-
+        {% if matched_urls %}{{ matched_urls | join(', ') }}{% else %}{{ commit.url }}{% endif %}
+
+        {{ commit.message_first_line }}, {{ commit.author }} · {{ commit.short_sha }}
+
+  # Broad SWE list (any company); the point is catching infra/platform/network
+  # roles that wouldn't be caught by a fixed company list. Role is the 2nd
+  # pipe-delimited column, hence the anchored `^\|[^|]*\|` prefix.
+  - name: speedyapply-swe-infra
+    repo: speedyapply/2027-SWE-College-Jobs
+    branch: main
+    interval: 300
+    channels: [ntfy-main, discord-jobs]
+    filters:
+      files:
+        include: ["README.md"]
+      diff:
+        include:
+          - '(?i)^\|[^|]*\|[^|]*\b(infra(structure)?|platform|network(ing)?|\bSRE\b|site reliability|systems? engineer|distributed systems)\b'
+
+    template:
+      title: "Infra role: {{ matched_keywords | join(', ') }}"
+      body: |-
+        {% if matched_urls %}{{ matched_urls | join(', ') }}{% else %}{{ commit.url }}{% endif %}
+
+        {{ commit.message_first_line }}, {{ commit.author }} · {{ commit.short_sha }}
+
+  # Same idea, AI/ML-focused list: catches ML infra / MLOps roles specifically.
+  - name: speedyapply-ai-infra
+    repo: speedyapply/2027-AI-College-Jobs
+    branch: main
+    interval: 300
+    channels: [ntfy-main, discord-jobs]
+    filters:
+      files:
+        include: ["README.md"]
+      diff:
+        include:
+          - '(?i)^\|[^|]*\|[^|]*\b(infra(structure)?|platform|network(ing)?|\bSRE\b|site reliability|systems? engineer|\bMLOps\b|ML infra)\b'
+
+    template:
+      title: "AI infra role: {{ matched_keywords | join(', ') }}"
+      body: |-
+        {% if matched_urls %}{{ matched_urls | join(', ') }}{% else %}{{ commit.url }}{% endif %}
+
+        {{ commit.message_first_line }}, {{ commit.author }} · {{ commit.short_sha }}
+
+  # New-grad list: priming now so postings aren't missed once you're closer to
+  # graduating. Same JSON-listings format/company list as simplify-google-internships.
+  - name: simplify-newgrad
+    repo: SimplifyJobs/New-Grad-Positions
+    branch: dev
+    interval: 300
+    channels: [ntfy-main, discord-jobs]
+    filters:
+      files:
+        include: ["**/listings.json"]
+      diff:
+        include:
+          - '(?i)\bGoogle\b'
+          - '(?i)deepmind'
+          - '(?i)\bMeta\b'
+          - '(?i)\bAmazon\b'
+          - '(?i)\bDatabricks\b'
+          - '(?i)Capital ?One'
+          - '(?i)\bMicrosoft\b'
+          - '(?i)\bApple\b'
+          - '(?i)\bNetflix\b'
+          - '(?i)\bNvidia\b'
+          - '(?i)\bSalesforce\b'
+          - '(?i)\bAirbnb\b'
+          - '(?i)\bStripe\b'
+          - '(?i)\bUber\b'
+          - '(?i)\bLyft\b'
+          - '(?i)\bPinterest\b'
+          - '(?i)\bNotion\b'
+          - '(?i)\bFigma\b'
+          - '(?i)\bAnthropic\b'
+          - '(?i)\bOpenAI\b'
+          - '(?i)\bPalantir\b'
+          - '(?i)\bSnowflake\b'
+          - '(?i)\bCloudflare\b'
+          - '(?i)\bDoorDash\b'
+          - '(?i)\bRobinhood\b'
+    template:
+      title: "New grad match: {{ matched_keywords | join(', ') }}"
+      body: |-
+        {% if matched_urls %}{{ matched_urls | join(', ') }}{% else %}{{ commit.url }}{% endif %}
+
+        {{ commit.message_first_line }}, {{ commit.author }} · {{ commit.short_sha }}

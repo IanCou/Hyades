@@ -1,0 +1,12 @@
+# Install Docker on one or more hosts
+#
+# Usage:
+#   ansible-playbook playbooks/docker.yml                    # all docker_hosts
+#   ansible-playbook playbooks/docker.yml -l immich          # single host
+#   ansible-playbook playbooks/docker.yml -l prod            # group
+---
+- name: Install Docker
+  hosts: "{{ target | default('docker_hosts') }}"
+  become: true
+  roles:
+    - docker

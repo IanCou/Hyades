@@ -1,0 +1,68 @@
+# Deploy Caddy reverse proxy.
+#
+# Unlike the generic deploy.yml flow, this syncs the whole service directory
+# (Caddyfile + Dockerfile) because Caddy is built locally with the cloudflare
+# DNS plugin baked in.
+#
+# Requires services/core/caddy/.env with CLOUDFLARE_API_TOKEN set.
+#
+# Usage:
+#   ansible-playbook playbooks/caddy.yml
+---
+- name: Deploy Caddy
+  hosts: caddy
+  become: true
+
+  vars:
+    service_src: "{{ playbook_dir }}/../../services/core/caddy"
+    deploy_dir: "/opt/services/caddy"
+
+  pre_tasks:
+    - name: Fail if .env is missing locally
+      ansible.builtin.stat:
+        path: "{{ service_src }}/.env"
+      delegate_to: localhost
+      become: false
+      register: env_file
+      failed_when: not env_file.stat.exists
+
+  tasks:
+    - name: Ensure service directory exists
+      ansible.builtin.file:
+        path: "{{ deploy_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Sync service files
+      ansible.builtin.copy:
+        src: "{{ service_src }}/{{ item.name }}"
+        dest: "{{ deploy_dir }}/{{ item.name }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { name: "docker-compose.yml", mode: "0644" }
+        - { name: "Dockerfile", mode: "0644" }
+        - { name: "Caddyfile", mode: "0644" }
+        - { name: ".env", mode: "0600" }
+
+    # The xcaddy build leaves ~2 GB of Go module/compile cache behind, and every
+    # rebuild orphans the previous homelab/caddy image. Left alone they filled
+    # the disk and failed the build (2026-10-17), so clean up whether or not the
+    # build succeeded. The caddy:2-builder base image is kept for the next build.
+    # remove_orphans stops containers for services dropped from the compose file
+    # (an orphaned caddy-node-exporter-1 held port 9100 for ~3 months, 2026-10).
+    - name: Build image and start stack
+      block:
+        - name: Build image and start stack
+          community.docker.docker_compose_v2:
+            project_src: "{{ deploy_dir }}"
+            state: present
+            remove_orphans: true
+            build: always
+      always:
+        - name: Prune build cache and dangling images
+          ansible.builtin.command: "{{ item }}"
+          loop:
+            - docker builder prune -f
+            - docker image prune -f
+          register: prune
+          changed_when: "'Total reclaimed space: 0B' not in prune.stdout"

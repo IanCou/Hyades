@@ -1,0 +1,403 @@
+name: CI
+
+# Single workflow for the repo so the Actions tab / PR checks show one run
+# with subtasks (jobs): validate, lint, secret-scan, and deploy.
+#   - validate / lint / secret-scan run on GitHub-hosted ubuntu-latest
+#   - deploy runs on the self-hosted homelab runner (needs LAN + secrets) and
+#     only fires on push to main, so PR code never runs on it (ADR 0005)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Gate: nothing deploys unless these checks pass ──────────────────────────
+  validate:
+    # GitHub-hosted on purpose: this job runs PR-supplied code (gen_docs.py,
+    # the Caddy Dockerfile) on every pull_request with no label gate. On the
+    # self-hosted runner that code would run as root next to the fleet SSH key,
+    # the vault password and /opt/github-runner/envs. Nothing here needs the
+    # LAN, so keep it on a throwaway VM (ADR 0005).
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.changes.outputs.services }}
+      docs_changed: ${{ steps.changes.outputs.docs_changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install validation tools
+        # Syntax-check needs every module the playbooks name to resolve, so the
+        # three collections they use must be present (not just ansible-core).
+        run: |
+          python3 -m pip install --quiet pyyaml ansible-core==2.21.5
+          ansible-galaxy collection install \
+            community.docker community.general ansible.posix
+
+      - name: Detect changes
+        id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          # Pushes diff from the previous tip; first pushes use the empty tree.
+          # PR merge commits and manual runs keep the HEAD~1 base.
+          if [ "$EVENT_NAME" = push ]; then
+            if [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" = 0000000000000000000000000000000000000000 ]; then
+              BASE=$(git hash-object -t tree /dev/null)
+            elif git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+              BASE="$BEFORE_SHA"
+            elif git fetch --no-tags --depth=1 origin "$BEFORE_SHA" \
+              && git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+              BASE="$BEFORE_SHA"
+            else
+              echo "::warning::before commit unavailable; diffing against empty tree"
+              BASE=$(git hash-object -t tree /dev/null)
+            fi
+          elif git rev-parse HEAD~1 >/dev/null 2>&1; then
+            BASE=HEAD~1
+          else
+            BASE=$(git hash-object -t tree /dev/null)
+          fi
+          changed=$(git diff --name-only "$BASE" HEAD)
+
+          # services/<tier>/<service>/... → <service>
+          service_names=()
+          while IFS= read -r -d '' path; do
+            [[ $path == services/*/* ]] || continue
+            service=${path#services/}
+            service=${service#*/}
+            service=${service%%/*}
+            [[ $service =~ ^[a-z0-9-]+$ ]] || { echo "::error::bad service name: $service"; exit 1; }
+            service_names+=("$service")
+          done < <(git diff --name-only -z "$BASE" HEAD)
+          # Prometheus scrape targets are rendered from the inventory
+          # (services/core/prometheus/prometheus.yml.j2), so an inventory-only
+          # edit changes its config without touching services/. Redeploy it,
+          # or a newly added host would sit unscraped until the next
+          # unrelated Prometheus change.
+          if grep -qx 'ansible/inventory/hosts.yml' <<<"$changed"; then
+            service_names+=(prometheus)
+          fi
+          services=''
+          if [ ${#service_names[@]} -gt 0 ]; then
+            services=$(printf '%s\n' "${service_names[@]}" | sort -u | tr '\n' ' ')
+          fi
+          docs_changed=$(echo "$changed" | grep -c '^docusaurus/' || true)
+          caddy_changed=$(echo "$changed" | grep -c '^services/core/caddy/' || true)
+          tf_changed=$(echo "$changed" | grep -c '^terraform/' || true)
+
+          {
+            echo "services=$services"
+            echo "docs_changed=$docs_changed"
+            echo "caddy_changed=$caddy_changed"
+            echo "tf_changed=$tf_changed"
+          } | tee -a "$GITHUB_OUTPUT" "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate generated docs
+        # network.md tables are generated from Terraform + Caddyfile; fail if
+        # someone edited inventory without running `make docs`
+        run: python3 scripts/gen_docs.py --check
+
+      - name: Validate workflow file references in docs
+        # SECURITY.md/CONTRIBUTING.md used to reference deploy.yml/secret-scan.yml
+        # as separate files after CI was consolidated into one ci.yml; catch that
+        # class of drift before it ships again. changelog/ is excluded: those are
+        # point-in-time historical records, not living docs.
+        run: |
+          rc=0
+          refs=$(find docusaurus/docs -name '*.md' -not -path '*/changelog/*' -print0 \
+              | xargs -0 grep -rohE '\.github/workflows/[A-Za-z0-9_-]+\.yml' ; \
+            grep -rohE '\.github/workflows/[A-Za-z0-9_-]+\.yml' SECURITY.md CONTRIBUTING.md README.md 2>/dev/null)
+          refs=$(echo "$refs" | sort -u)
+          for ref in $refs; do
+            if [ ! -f "$ref" ]; then
+              echo "::error::doc references nonexistent workflow file: $ref"
+              rc=1
+            fi
+          done
+          exit $rc
+
+      - name: Validate changed compose stacks (YAML syntax)
+        if: steps.changes.outputs.services != ''
+        env:
+          SERVICES: ${{ steps.changes.outputs.services }}
+        run: |
+          # Just parse the YAML; catches malformed compose files without a full
+          # `docker compose config`, which needs the gitignored .env and trips on
+          # env interpolated into volume/port specs (e.g. immich).
+          for service in $SERVICES; do
+            [[ $service =~ ^[a-z0-9-]+$ ]] || { echo "::error::bad service name: $service"; exit 1; }
+          done
+          python3 -c "import yaml" 2>/dev/null \
+            || python3 -m pip install --quiet pyyaml 2>/dev/null || true
+          if ! python3 -c "import yaml" 2>/dev/null; then
+            echo "::warning::pyyaml unavailable, skipping compose YAML check"; exit 0
+          fi
+          rc=0
+          for service in $SERVICES; do
+            file=$(find services -mindepth 3 -maxdepth 3 \
+              -path "*/$service/docker-compose.yml" | head -1)
+            if [ -z "$file" ]; then
+              echo "::warning::no compose file for '$service', skipping"; continue
+            fi
+            echo "::group::yaml check: $service"
+            if python3 -c "import yaml, sys; yaml.safe_load(open(sys.argv[1]))" "$file"; then
+              echo "ok: $file"
+            else
+              echo "::error::invalid YAML: $file"; rc=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $rc
+
+      - name: Validate Caddyfile
+        if: steps.changes.outputs.caddy_changed != '0'
+        run: |
+          # Custom build carries the caddy-dns/cloudflare module the config uses.
+          # `caddy adapt` only parses/converts the Caddyfile to JSON: pure syntax
+          # check, no module provisioning. `caddy validate` fully provisions the
+          # global ACME automation policy, which requires a *real* working
+          # CLOUDFLARE_API_TOKEN this job never had; it would fail this check
+          # on every PR that touches the Caddyfile at all, token or no token.
+          docker build -q -t caddy-validate services/core/caddy
+          docker run --rm -v "$PWD/services/core/caddy/Caddyfile:/tmp/Caddyfile:ro" \
+            caddy-validate caddy adapt --adapter caddyfile --config /tmp/Caddyfile > /dev/null
+
+      - name: Validate Ansible
+        working-directory: ansible
+        env:
+          SERVICES: ${{ steps.changes.outputs.services }}
+        run: |
+          # ansible.cfg sets vault_password_file = .vault_password, and ansible
+          # hard-errors at startup if that file is missing. vault.yml is
+          # gitignored, so there is nothing to decrypt here; this job must never
+          # see the real password.
+          # A throwaway password satisfies the check; if an encrypted file ever
+          # gets committed, decryption fails loudly instead of silently passing.
+          echo "not-the-real-password" > "$RUNNER_TEMP/vault-pass"
+          export ANSIBLE_VAULT_PASSWORD_FILE="$RUNNER_TEMP/vault-pass"
+          rc=0
+          command -v ansible-lint >/dev/null && { ansible-lint playbooks/ || rc=1; }
+          # Syntax-check only the playbooks the deploy job actually runs
+          checks="playbooks/deploy.yml playbooks/docs.yml"
+          for service in $SERVICES; do
+            [[ $service =~ ^[a-z0-9-]+$ ]] || { echo "::error::bad service name: $service"; exit 1; }
+            [ -f "playbooks/$service.yml" ] && checks="$checks playbooks/$service.yml"
+          done
+          for pb in $checks; do
+            echo "::group::syntax-check $pb"
+            ansible-playbook --syntax-check -i inventory/hosts.yml "$pb" || rc=1
+            echo "::endgroup::"
+          done
+          exit $rc
+
+      - name: Validate rendered Prometheus config
+        # --syntax-check never renders templates, so a broken prometheus.yml.j2
+        # (or an inventory change it can't handle) would only surface on the
+        # live host. Render it here against the real inventory and run the same
+        # promtool check the playbook's `validate:` runs before it lands.
+        if: contains(format(' {0} ', steps.changes.outputs.services), ' prometheus ')
+        working-directory: ansible
+        run: |
+          echo "not-the-real-password" > "$RUNNER_TEMP/vault-pass"
+          export ANSIBLE_VAULT_PASSWORD_FILE="$RUNNER_TEMP/vault-pass"
+          rendered="$RUNNER_TEMP/prometheus.yml"
+          ansible -i inventory/hosts.yml localhost -m ansible.builtin.template \
+            -a "src=../services/core/prometheus/prometheus.yml.j2 dest=$rendered mode=0644"
+          cat "$rendered"
+          docker run --rm --entrypoint promtool \
+            -v "$rendered:/tmp/prometheus.yml:ro" \
+            prom/prometheus:latest check config /tmp/prometheus.yml
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        if: steps.changes.outputs.tf_changed != '0'
+        with:
+          terraform_version: "1.16.6"
+          terraform_wrapper: false
+
+      - name: Validate Terraform
+        if: steps.changes.outputs.tf_changed != '0'
+        run: |
+          terraform fmt -check -recursive terraform
+          for env in core prod test; do
+            echo "::group::terraform validate: $env"
+            terraform -chdir="terraform/envs/$env" init -backend=false -input=false >/dev/null
+            terraform -chdir="terraform/envs/$env" validate
+            echo "::endgroup::"
+          done
+
+  # ── Style/format checks (GitHub-hosted) ─────────────────────────────────────
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Prettier (check formatting)
+        run: npx --yes prettier --check "**/*.{md,yml,yaml,json,js}"
+
+      - name: markdownlint (markdown style)
+        # network.md is generated (contains HTML markers); skip it like prettier does
+        run: npx --yes markdownlint-cli2 "**/*.md" "!**/node_modules/**" "!**/.terraform/**" "!**/build/**" "!services/**" "!ansible/**" "!docusaurus/docs/network.md"
+
+      - name: actionlint (GitHub Actions workflows)
+        uses: rhysd/actionlint@03d0035246f3e81f36aed592ffb4bebf33a03106 # v1.7.7
+
+  # ── Secret scanning (GitHub-hosted) ─────────────────────────────────────────
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+
+  # ── Deploy: only on push to main, only if validate/lint/secret-scan passed ──
+  deploy:
+    needs: [validate, lint, secret-scan]
+    # Runs only where the HOMELAB_RUNNER repo variable is set (the private source
+    # repo). The public Hyades snapshot has no runner or secrets, so it skips.
+    concurrency:
+      group: deploy-main
+      cancel-in-progress: false
+    if: >-
+      vars.HOMELAB_RUNNER == 'true' &&
+      github.event_name == 'push' &&
+      (needs.validate.outputs.services != '' || needs.validate.outputs.docs_changed != '0')
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Stage runner-local .env files into work tree
+        if: needs.validate.outputs.services != ''
+        run: |
+          # Gitignored .env files live at /opt/github-runner/envs/<service>.env on
+          # the runner. Copy each into its matching services/<tier>/<service>/ so
+          # per-service playbooks (caddy, internship-watcher) find them.
+          envs_dir=/opt/github-runner/envs
+          [ -d "$envs_dir" ] || { echo "no $envs_dir, skipping"; exit 0; }
+          for envfile in "$envs_dir"/*.env; do
+            [ -f "$envfile" ] || continue
+            name=$(basename "$envfile" .env)
+            for tier in core prod test; do
+              target="services/$tier/$name"
+              if [ -d "$target" ]; then
+                cp "$envfile" "$target/.env"
+                echo "staged $target/.env"
+              fi
+            done
+          done
+
+      - name: Read guest power state from Proxmox
+        # Fills the `stopped` group (child of ci_deploy_skip) from live Proxmox
+        # state instead of a hand-kept list. If no Proxmox node answers, this
+        # fails the job before any host is touched. Every later step picks up
+        # the fragment through ANSIBLE_INVENTORY.
+        working-directory: ansible
+        run: |
+          export ANSIBLE_VAULT_PASSWORD_FILE="$HOME/.ansible_vault_password"
+          state="$RUNNER_TEMP/proxmox-state.yml"
+          python3 ../scripts/proxmox_power_state.py inventory/hosts.yml "$state"
+          inv="$GITHUB_WORKSPACE/ansible/inventory/hosts.yml,$state"
+          echo "ANSIBLE_INVENTORY=$inv" >> "$GITHUB_ENV"
+          skipped=$(ANSIBLE_INVENTORY="$inv" ansible ci_deploy_skip --list-hosts 2>/dev/null \
+            | sed -n '2,$s/^ *//p' | sort | tr '\n' ' ')
+          echo "::notice::not deployed by CI (stopped in Proxmox, or unreachable from the runner): ${skipped:-none}"
+          echo "Skipped hosts: ${skipped:-none}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy changed services
+        if: needs.validate.outputs.services != ''
+        working-directory: ansible
+        env:
+          SERVICES: ${{ needs.validate.outputs.services }}
+        run: |
+          export ANSIBLE_VAULT_PASSWORD_FILE="$HOME/.ansible_vault_password"
+          # Every playbook call excludes ci_deploy_skip: guests Proxmox reports
+          # as not running (filled in by the step above) plus the Pi, which the
+          # runner can't SSH to. Run 39100257683 died on them: node-exporter.yml
+          # hit all of docker_hosts, 4 came back UNREACHABLE, and bash -e ended
+          # the loop before prometheus deployed.
+          # An empty result is handled differently per call. A per-service
+          # playbook whose play matches nothing after the limit prints
+          # "skipping: no hosts matched" and exits 0. deploy.yml's
+          # `-l "immich:!ci_deploy_skip"` leaves no host in the whole
+          # inventory, which ansible-playbook treats as an error (exit 1), so
+          # skipped hosts are caught before that call instead.
+          failed=()
+          for service in $SERVICES; do
+            [[ $service =~ ^[a-z0-9-]+$ ]] || { echo "::error::bad service name: $service"; exit 1; }
+            echo "::group::Deploy $service"
+            # Service-specific playbooks (caddy.yml, internship-watcher.yml) handle
+            # locally-built images or extra files (Caddyfile, watch.py). The generic
+            # deploy.yml only copies docker-compose.yml + .env.
+            if [ -f "playbooks/$service.yml" ]; then
+              ansible-playbook "playbooks/$service.yml" -l 'all:!ci_deploy_skip' || failed+=("$service")
+            else
+              # Prints "hosts (N):"; N is 1 when the host is in the group. A
+              # service missing from inventory reads 0 here, then fails in
+              # deploy.yml below and lands in `failed`. stderr is dropped only
+              # to hide the "No hosts matched" warning every normal host
+              # triggers. The step shell is `bash -e` without pipefail, so if
+              # ansible itself fails, sed prints nothing and the empty count
+              # is caught by the -z check.
+              skip_count=$(ansible "$service:&ci_deploy_skip" --list-hosts 2>/dev/null \
+                | sed -n 's/^ *hosts (\([0-9]*\)):$/\1/p')
+              if [ -z "$skip_count" ]; then
+                echo "::error::could not read ci_deploy_skip membership for $service"
+                failed+=("$service")
+              elif [ "$skip_count" -gt 0 ]; then
+                echo "::notice::$service is in ci_deploy_skip (stopped, or unreachable from the runner); not deployed. Run deploy.yml -l $service by hand once it is back."
+              else
+                ansible-playbook playbooks/deploy.yml -l "$service:!ci_deploy_skip" || failed+=("$service")
+              fi
+            fi
+            echo "::endgroup::"
+          done
+          # Skipped hosts never reach a playbook, so anything in `failed` broke
+          # on a host that is powered on. One failure doesn't block the services
+          # after it; the step still fails once they have all had their turn.
+          if [ ${#failed[@]} -gt 0 ]; then
+            echo "::error::deploy failed for: ${failed[*]}"
+            {
+              echo "### Deploy failures"
+              printf -- '- %s\n' "${failed[@]}"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - name: Deploy docs site
+        if: needs.validate.outputs.docs_changed != '0'
+        working-directory: ansible
+        run: |
+          export ANSIBLE_VAULT_PASSWORD_FILE="$HOME/.ansible_vault_password"
+          # docs is not in ci_deploy_skip; the limit keeps this call on the
+          # same runner-safe host set as every other deploy step.
+          ansible-playbook playbooks/docs.yml -l 'all:!ci_deploy_skip'

@@ -1,0 +1,132 @@
+---
+# Installs the GitHub Actions self-hosted runner + Ansible so it can run playbooks.
+# Requires vars: github_repo (owner/repo), vault_github_pat
+
+- name: Install dependencies
+  ansible.builtin.apt:
+    name:
+      - curl
+      - jq
+      - git
+      - python3
+      - python3-pip
+      - python3-venv
+      - rsync
+      - openssh-client
+    state: present
+    update_cache: true
+
+- name: Install Ansible in venv
+  ansible.builtin.pip:
+    name:
+      - ansible
+      - docker
+    state: present
+    virtualenv: /opt/ansible-venv
+    virtualenv_command: python3 -m venv
+
+- name: Install Ansible collections
+  ansible.builtin.command:
+    cmd: /opt/ansible-venv/bin/ansible-galaxy collection install community.docker
+  changed_when: false
+
+# Link every ansible* entry point the venv ships, not a hand-kept list. The
+# old list stopped at ansible/-playbook/-galaxy/-vault, so CI's call to
+# ansible-inventory (scripts/proxmox_power_state.py) failed with "No such file"
+# on run 39160219243 while the other three kept resolving.
+- name: Find ansible entry points in the venv
+  ansible.builtin.find:
+    paths: /opt/ansible-venv/bin
+    patterns: "ansible*"
+  register: _ansible_bins
+
+- name: Symlink ansible binaries to /usr/local/bin
+  ansible.builtin.file:
+    src: "{{ item.path }}"
+    dest: "/usr/local/bin/{{ item.path | basename }}"
+    state: link
+  loop: "{{ _ansible_bins.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
+- name: Create runner directory
+  ansible.builtin.file:
+    path: "{{ runner_install_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Check if runner is already configured
+  ansible.builtin.stat:
+    path: "{{ runner_install_dir }}/.runner"
+  register: runner_configured
+
+- name: Download runner tarball
+  ansible.builtin.get_url:
+    url: "https://github.com/actions/runner/releases/download/v{{ runner_version }}/actions-runner-linux-x64-{{ runner_version }}.tar.gz"
+    dest: "/tmp/actions-runner.tar.gz"
+    mode: "0644"
+  when: not runner_configured.stat.exists
+
+- name: Extract runner
+  ansible.builtin.unarchive:
+    src: /tmp/actions-runner.tar.gz
+    dest: "{{ runner_install_dir }}"
+    remote_src: true
+  when: not runner_configured.stat.exists
+
+- name: Get registration token from GitHub API
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/{{ github_repo }}/actions/runners/registration-token"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ vault_github_pat }}"
+      Accept: application/vnd.github+json
+    status_code: 201
+  register: reg_token
+  when: not runner_configured.stat.exists
+
+- name: Configure runner
+  ansible.builtin.shell:
+    cmd: |
+      ./config.sh \
+        --url "https://github.com/{{ github_repo }}" \
+        --token "{{ reg_token.json.token }}" \
+        --name "{{ inventory_hostname }}" \
+        --labels "{{ runner_labels }}" \
+        --unattended
+    chdir: "{{ runner_install_dir }}"
+  environment:
+    RUNNER_ALLOW_RUNASROOT: "1"
+  when: not runner_configured.stat.exists
+
+- name: Install runner as systemd service
+  ansible.builtin.shell:
+    cmd: ./svc.sh install root
+    chdir: "{{ runner_install_dir }}"
+  when: not runner_configured.stat.exists
+
+- name: Start runner service
+  ansible.builtin.shell:
+    cmd: ./svc.sh start
+    chdir: "{{ runner_install_dir }}"
+  when: not runner_configured.stat.exists
+
+- name: Ensure .ssh dir exists on runner
+  ansible.builtin.file:
+    path: /root/.ssh
+    state: directory
+    mode: "0700"
+
+- name: Generate runner SSH keypair
+  ansible.builtin.command:
+    cmd: ssh-keygen -t ed25519 -f /root/.ssh/id_ed25519 -N "" -C "github-runner@homelab"
+    creates: /root/.ssh/id_ed25519
+
+- name: Read runner public key
+  ansible.builtin.slurp:
+    src: /root/.ssh/id_ed25519.pub
+  register: _runner_pubkey_slurp
+
+- name: Expose pubkey as host fact
+  ansible.builtin.set_fact:
+    runner_pubkey: "{{ _runner_pubkey_slurp.content | b64decode | trim }}"

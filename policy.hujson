@@ -1,0 +1,146 @@
+{
+	// Managed via GitOps, see .github/workflows/tailscale-acl.yml and ADR 0007
+	// (docusaurus/docs/decisions/0007-tailscale-acl-route-scoping.md).
+	// Do not hand-edit this in the admin console; changes there will be
+	// overwritten by the next merge to main. Edit this file, open a PR:
+	// the tailscale-acl workflow validates it (`action: test`) on the PR and
+	// applies it (`action: apply`) automatically once merged.
+
+	// hosts: stable names for tier ranges and the individual systems used by
+	// grants or tests. These names describe LAN destinations, not tailnet peers.
+	"hosts": {
+		"infra-lan":  "10.0.0.0/24",
+		"core-lan":   "10.0.1.0/24",
+		"prod-lan":   "10.0.2.0/24",
+		"test-lan":   "10.0.3.0/24",
+		"lan-v6":     "fd00:db8::/64",
+		"ci-runner":  "10.0.1.13",
+		"jump":       "10.0.1.22",
+		"prometheus": "10.0.1.18",
+		"adguard":    "10.0.1.16",
+		"ts-router":  "10.0.1.15",
+		"pi-gateway": "10.0.0.3",
+		"pve-node1":  "10.0.0.10",
+		"pve-node2":  "10.0.0.11",
+		"pve-node3":  "10.0.0.12",
+		"caddy":      "10.0.1.10",
+		// Operator's MacBook Pro on the tailnet (stable Tailscale IP, not LAN).
+		"operator-mac":   "100.64.0.2",
+	},
+
+	// tagOwners: tailnet admins may assign gateway, full-admin, opt-in
+	// read-only viewer, and AI agent roles. No device receives a tag merely by
+	// defining it. tag:legacy-agent is the console-created predecessor of
+	// tag:ai-agent: kept only so the device already carrying it is not
+	// orphaned when this file is applied. Retag that device tag:ai-agent, then
+	// delete tag:legacy-agent here and from the grant and tests below.
+	"tagOwners": {
+		"tag:homelab-gateway": ["autogroup:admin"],
+		"tag:homelab-admin":   ["autogroup:admin"],
+		"tag:homelab-viewer":  ["autogroup:admin"],
+		"tag:ai-agent":        ["autogroup:admin"],
+		"tag:legacy-agent":      ["autogroup:admin"],
+	},
+
+	// grants: the four admin IPv4 rules are deliberately separate. Their union
+	// is exactly the previous 10.0.0.0/22 grant, so an admin loses no access
+	// today and a later PR can narrow one tier without editing the others.
+	"grants": [
+		// Infrastructure: Proxmox, the Pi gateway, NAS, router, and LAN VMs.
+		{"src": ["tag:homelab-admin"], "dst": ["infra-lan"], "ip": ["*"]},
+		// Core: CI, DNS, monitoring, reverse proxy, VPN, and control services.
+		{"src": ["tag:homelab-admin"], "dst": ["core-lan"], "ip": ["*"]},
+		// Production: all production LXCs and every port they expose.
+		{"src": ["tag:homelab-admin"], "dst": ["prod-lan"], "ip": ["*"]},
+		// Test: all test LXCs and every port they expose.
+		{"src": ["tag:homelab-admin"], "dst": ["test-lan"], "ip": ["*"]},
+		// IPv6 LAN access remains identical to the previous /64 admin grant.
+		{"src": ["tag:homelab-admin"], "dst": ["lan-v6"], "ip": ["*"]},
+
+		// Viewer is opt-in and currently assigned to no device. It can reach web
+		// services directly in prod, web services through Caddy, and LAN DNS only.
+		{"src": ["tag:homelab-viewer"], "dst": ["prod-lan", "caddy"], "ip": ["tcp:80", "tcp:443"]},
+		{"src": ["tag:homelab-viewer"], "dst": ["adguard"], "ip": ["tcp:53", "udp:53"]},
+
+		// AI agents get SSH only, and only to the operator's Mac and the two
+		// LAN entry points (CI runner, jump host). They reach the rest of the
+		// fleet by hopping from those hosts, so the tailnet ACL never grants an
+		// agent a direct path to Proxmox, the NAS, or any service port.
+		{"src": ["tag:ai-agent", "tag:legacy-agent"], "dst": ["operator-mac", "ci-runner", "jump"], "ip": ["tcp:22"]},
+
+		// Tagged devices leave autogroup:member. Keep every tag that needs exit
+		// nodes explicit here, including admin per ADR 0007's lockout addendum.
+		{"src": ["autogroup:member", "tag:homelab-admin", "tag:homelab-viewer"], "dst": ["autogroup:internet"], "ip": ["*"]},
+	],
+
+	// autoApprovers: gateways may self-approve the existing LAN prefixes and
+	// exit-node role. Tailscale also auto-approves any advertised route wholly
+	// contained by a listed prefix, so a future /22 to per-tier /24 split needs
+	// no autoApprovers change.
+	"autoApprovers": {
+		"routes": {
+			"10.0.0.0/22": ["tag:homelab-gateway"],
+			"fd00:db8::/64": ["tag:homelab-gateway"],
+		},
+		"exitNode": ["tag:homelab-gateway"],
+	},
+
+	// tests: pin the intended LAN boundary for each tag. Exit-node behavior is
+	// not expressible reliably as an ACL test destination, so it is protected by
+	// keeping the autogroup:internet grant above and is checked manually with
+	// `tailscale status`, selecting an exit node, and `curl ifconfig.me`.
+	// IPv6 is omitted because bracketed IPv6 ACL-test destination syntax has not
+	// been verified against this tailnet's GitOps validator.
+	"tests": [
+		{
+			"src": "tag:homelab-admin",
+			"accept": [
+				"ci-runner:22",
+				"jump:22",
+				"10.0.2.10:443",
+				"10.0.3.10:443",
+				"pve-node1:8006",
+				"pve-node2:22",
+				"prometheus:9090",
+				"adguard:53",
+				"10.0.0.249:443",
+			],
+		},
+		{
+			"src": "tag:homelab-viewer",
+			"accept": ["10.0.2.10:443", "10.0.2.10:80", "adguard:53"],
+			"deny": [
+				"ci-runner:22",
+				"pve-node1:8006",
+				"pve-node1:22",
+				"10.0.2.10:22",
+				"prometheus:9090",
+				"10.0.3.10:443",
+			],
+		},
+		{
+			"src": "tag:ai-agent",
+			"accept": ["operator-mac:22", "ci-runner:22", "jump:22"],
+			"deny": [
+				"operator-mac:5900",
+				"ci-runner:443",
+				"jump:8080",
+				"pve-node1:22",
+				"pve-node1:8006",
+				"adguard:22",
+				"10.0.2.10:22",
+				"10.0.0.249:22",
+				"prometheus:9090",
+			],
+		},
+		{
+			"src": "tag:legacy-agent",
+			"accept": ["operator-mac:22", "ci-runner:22", "jump:22"],
+			"deny": ["pve-node1:22", "10.0.2.10:22"],
+		},
+		{
+			"src": "tag:homelab-gateway",
+			"deny": ["ci-runner:22", "pve-node1:8006", "10.0.2.10:443"],
+		},
+	],
+}

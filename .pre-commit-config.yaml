@@ -1,0 +1,22 @@
+# Pre-commit hooks for this repo.
+#
+# One-time setup (installs the git hook into .git/hooks):
+#   pip install pre-commit   # or: brew install pre-commit
+#   pre-commit install
+#
+# Run against all files manually:
+#   pre-commit run --all-files
+#
+# The gitleaks hook uses the same .gitleaks.toml config as CI, so local
+# results match the secret-scan workflow.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace

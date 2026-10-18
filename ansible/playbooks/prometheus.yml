@@ -1,0 +1,100 @@
+# Deploy Prometheus.
+#
+# Uses a custom playbook (instead of generic deploy.yml) to render the
+# inventory-backed prometheus.yml alongside docker-compose.yml, validate it,
+# and reload Prometheus when its configuration changes.
+#
+# Usage:
+#   ansible-playbook playbooks/prometheus.yml
+#   ansible-playbook playbooks/prometheus.yml -l prometheus
+---
+- name: Deploy Prometheus
+  hosts: prometheus
+  become: true
+
+  vars:
+    service_src: "{{ playbook_dir }}/../../services/core/prometheus"
+    deploy_dir: "/opt/services/prometheus"
+
+  tasks:
+    - name: Ensure service directory exists
+      ansible.builtin.file:
+        path: "{{ deploy_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Ensure Prometheus data directory exists with correct permissions
+      ansible.builtin.file:
+        path: "/data/prometheus"
+        state: directory
+        owner: "65534"
+        group: "65534"
+        mode: "0755"
+
+    - name: Copy docker-compose.yml
+      ansible.builtin.copy:
+        src: "{{ service_src }}/docker-compose.yml"
+        dest: "{{ deploy_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    # Ansible's temporary file is root-owned mode 0600, while the image runs as
+    # nobody. Validate as root so an invalid render never replaces the live file.
+    - name: Render and validate prometheus.yml
+      ansible.builtin.template:
+        src: "{{ service_src }}/prometheus.yml.j2"
+        dest: "{{ deploy_dir }}/prometheus.yml"
+        mode: "0644"
+        validate: >-
+          docker run --rm --user 0 --entrypoint promtool
+          -v %s:/tmp/prometheus.yml:ro
+          prom/prometheus:latest check config /tmp/prometheus.yml
+      notify: Reload Prometheus configuration
+
+    - name: Pull images and start stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ deploy_dir }}"
+        state: present
+        remove_orphans: true
+        pull: always
+
+  handlers:
+    # Updating a bind-mounted file does not make docker compose recreate the
+    # container. SIGHUP is Prometheus's native reload and avoids exposing the
+    # unauthenticated lifecycle endpoints on LAN-reachable port 9090.
+    - name: Send SIGHUP to Prometheus
+      listen: Reload Prometheus configuration
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ deploy_dir }}/docker-compose.yml"
+          - kill
+          - -s
+          - SIGHUP
+          - prometheus
+      changed_when: true
+
+    # A failed reload is silent: Prometheus logs it and keeps scraping the old
+    # targets. So wait for its own metrics to show a successful load newer
+    # than this play's fact-gathering time (same host clock, and before the
+    # SIGHUP). `last_reload_successful 1` alone is not proof, it is still 1
+    # from the previous load until the new one finishes. A recreated container
+    # also passes, correctly: it loaded the new file at startup.
+    - name: Confirm Prometheus loaded the new configuration
+      listen: Reload Prometheus configuration
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9090/metrics"
+        method: GET
+        return_content: true
+      register: prometheus_metrics
+      vars:
+        metrics_text: "{{ prometheus_metrics.content | default('') }}"
+        reload_ok: "{{ metrics_text is search('(?m)^prometheus_config_last_reload_successful 1$') }}"
+        reload_ts: >-
+          {{ metrics_text
+             | regex_search('(?m)^prometheus_config_last_reload_success_timestamp_seconds (\S+)$', '\1')
+             | default(['0'], true) | first | float }}
+      until: reload_ok | bool and (reload_ts | float) > (ansible_date_time.epoch | float)
+      retries: 10
+      delay: 3

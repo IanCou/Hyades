@@ -1,0 +1,202 @@
+{
+	email ian@iancoutinho.net
+	acme_dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+}
+
+# Gate a site block behind Authentik's embedded outpost forward-auth check.
+# REQUIRES a Proxy Provider (forward auth, single application) configured in
+# Authentik's admin UI for each protected domain first; until that exists,
+# `import authentik` below will fail closed and block all access to the site.
+# Do not deploy this Caddyfile (ansible-playbook playbooks/caddy.yml) until
+# the Authentik-side provider/outpost setup is done for every protected block.
+(authentik) {
+	forward_auth 10.0.1.11:9000 {
+		uri /outpost.goauthentik.io/auth/caddy
+		copy_headers X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name
+		trusted_proxies private_ranges
+	}
+}
+
+# Proxmox hypervisors: UI uses self-signed cert, so skip verify on upstream
+pve1.example.com {
+	reverse_proxy https://10.0.0.10:8006 {
+		transport http {
+			tls_insecure_skip_verify
+		}
+	}
+}
+
+pve2.example.com {
+	reverse_proxy https://10.0.0.11:8006 {
+		transport http {
+			tls_insecure_skip_verify
+		}
+	}
+}
+
+pve3.example.com {
+	reverse_proxy https://10.0.0.12:8006 {
+		transport http {
+			tls_insecure_skip_verify
+		}
+	}
+}
+
+# Core services: 10.0.1.x
+# Portainer already has its own native Authentik OIDC login configured;
+# layering forward_auth on top would intercept requests before that login
+# is ever reached. No `import authentik` here; see ADR-pending PR #25 notes.
+portainer.example.com {
+	reverse_proxy https://10.0.1.12:9443 {
+		transport http {
+			tls_insecure_skip_verify
+		}
+	}
+}
+
+adguard.example.com {
+	# DoH clients can't do interactive Authentik login, so /dns-query bypasses
+	# the forward-auth gate; everything else (the dashboard) stays behind it.
+	@dns_query path /dns-query*
+	handle @dns_query {
+		reverse_proxy 10.0.1.16:80
+	}
+	handle {
+		import authentik
+		reverse_proxy 10.0.1.16:80
+	}
+}
+
+# Public via Cloudflare tunnel: DoH only, gated on a secret path token so
+# random internet clients can't use this as an open DNS resolver. Everything
+# except the exact /dns-query/{ADGUARD_DOH_TOKEN} path 404s. Configure your
+# own devices' DoH provider URL as:
+#   https://adguard.example.com/dns-query/{ADGUARD_DOH_TOKEN} (see .env)
+http://adguard.example.com {
+	@doh_token path /dns-query/{env.ADGUARD_DOH_TOKEN}*
+	handle @doh_token {
+		reverse_proxy 10.0.1.16:80 {
+			header_up X-Forwarded-Proto https
+		}
+	}
+	handle {
+		respond 404
+	}
+}
+
+docs.iancoutinho.net {
+	reverse_proxy 10.0.1.17:80
+}
+
+uptime.example.com {
+	reverse_proxy 10.0.1.20:3001
+}
+
+grafana.example.com {
+	import authentik
+	reverse_proxy 10.0.1.19:3000
+}
+
+semaphore.example.com {
+	import authentik
+	reverse_proxy 10.0.1.14:3000
+}
+
+# Public via Cloudflare tunnel
+http://ntfy.example.com {
+	reverse_proxy 10.0.1.21:80 {
+		header_up X-Forwarded-Proto https
+	}
+}
+
+ntfy.example.com {
+	reverse_proxy 10.0.1.21:80
+}
+
+# Public via Cloudflare tunnel (HTTP, CF terminates TLS at edge)
+# + LAN-direct HTTPS with Caddy-issued cert (AdGuard rewrites to LAN IP)
+http://auth.example.com {
+	reverse_proxy 10.0.1.11:9000 {
+		header_up X-Forwarded-Proto https
+	}
+}
+
+auth.example.com {
+	reverse_proxy 10.0.1.11:9000
+}
+
+# Prod services: 10.0.2.x
+http://immich.example.com {
+	reverse_proxy 10.0.2.10:2283 {
+		header_up X-Forwarded-Proto https
+	}
+}
+
+immich.example.com {
+	reverse_proxy 10.0.2.10:2283
+}
+
+http://nextcloud.example.com {
+	reverse_proxy 10.0.2.11:8080 {
+		header_up X-Forwarded-Proto https
+	}
+}
+
+nextcloud.example.com {
+	reverse_proxy 10.0.2.11:8080
+}
+
+# Coolify UI: prod LXC on node3
+# Same as Portainer above: Coolify already has its own native Authentik OIDC
+# login, so no forward_auth import here.
+coolify.example.com {
+	reverse_proxy 10.0.2.12:8000
+}
+
+n8n.example.com {
+	reverse_proxy 10.0.3.10:5678
+}
+
+internship-watcher.example.com {
+	reverse_proxy 10.0.3.11:8000
+}
+
+kafka.example.com {
+	reverse_proxy 10.0.3.12:8080
+}
+
+searxng.example.com {
+	reverse_proxy 10.0.2.13:8080
+}
+
+speedtest.example.com {
+	reverse_proxy 10.0.1.23:8765
+}
+
+openclaw.example.com {
+	reverse_proxy 10.0.3.13:18789
+}
+
+airtrail.example.com {
+	reverse_proxy 10.0.2.16:3000
+}
+
+cobalt.example.com {
+	reverse_proxy 10.0.2.17:8080
+}
+
+api.cobalt.example.com {
+	reverse_proxy 10.0.2.17:9000
+}
+
+kavita.example.com {
+	reverse_proxy 10.0.2.18:5000
+}
+
+audiobookshelf.example.com {
+	reverse_proxy 10.0.2.19:13378
+}
+
+homeassistant.example.com {
+	reverse_proxy 10.0.2.22:8123
+}

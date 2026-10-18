@@ -1,0 +1,25 @@
+services:
+  openclaw:
+    build: .
+    container_name: openclaw
+    restart: unless-stopped
+    ports:
+      - "18789:18789"
+    environment:
+      # Secrets: set in .env (pushed to the runner via make push-secret),
+      # never committed.
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}
+      # Claude API key; openclaw.json references it as ${ANTHROPIC_API_KEY}.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    volumes:
+      # Persist state (sqlite, workspace). The config itself is baked into
+      # the image (claude-only, no secrets). Paths under /home/node, not
+      # /root; the image runs as node:22-slim's built-in uid-1000 `node` user.
+      - openclaw-state:/home/node/.openclaw
+
+# No embedded node_exporter sidecar; it's a shared stack now
+# (services/_shared/node-exporter/), deployed once per host via
+# `ansible-playbook playbooks/node-exporter.yml -l openclaw`. See AGENT.md.
+
+volumes:
+  openclaw-state:

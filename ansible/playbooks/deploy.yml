@@ -1,0 +1,72 @@
+# Deploy a Docker Compose service
+#
+# Copies the compose file (and .env if present) from services/<tier>/<service>/
+# to /opt/services/<service>/ on the target host, then runs docker compose up.
+#
+# Usage:
+#   ansible-playbook playbooks/deploy.yml -l immich
+#   ansible-playbook playbooks/deploy.yml -l prod        # deploy all prod services
+#
+# The 'service' and 'tier' vars come from inventory/hosts.yml.
+# Override on the command line if needed:
+#   ansible-playbook playbooks/deploy.yml -l immich -e "service=immich tier=prod"
+---
+- name: Deploy service
+  hosts: "{{ target | default('docker_hosts') }}"
+  become: true
+
+  vars:
+    repo_services_dir: "{{ playbook_dir }}/../../services"
+    deploy_dir: "/opt/services/{{ service }}"
+
+  tasks:
+    - name: Ensure service directory exists
+      ansible.builtin.file:
+        path: "{{ deploy_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Copy docker-compose.yml
+      ansible.builtin.copy:
+        src: "{{ repo_services_dir }}/{{ tier }}/{{ service }}/docker-compose.yml"
+        dest: "{{ deploy_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    - name: Check if .env exists locally
+      ansible.builtin.stat:
+        path: "{{ repo_services_dir }}/{{ tier }}/{{ service }}/.env"
+      delegate_to: localhost
+      become: false
+      register: env_file
+
+    - name: Copy .env (if present locally)
+      ansible.builtin.copy:
+        src: "{{ repo_services_dir }}/{{ tier }}/{{ service }}/.env"
+        dest: "{{ deploy_dir }}/.env"
+        mode: "0600"
+      when: env_file.stat.exists
+
+    # remove_orphans: a service deleted from the compose file gets its container
+    # stopped on the next deploy instead of running on, untracked (2026-10: an
+    # orphaned caddy-node-exporter-1 held port 9100 for ~3 months).
+    - name: Pull images and start stack (Standard)
+      community.docker.docker_compose_v2:
+        project_src: "{{ deploy_dir }}"
+        state: present
+        remove_orphans: true
+        pull: always
+      when: ansible_architecture != 'armv6l'
+
+    - name: Deploy compose stack (ARMv6 legacy docker-compose)
+      block:
+        - name: Pull latest images on ARMv6
+          ansible.builtin.command:
+            cmd: "docker-compose -f {{ deploy_dir }}/docker-compose.yml pull"
+          changed_when: true
+          failed_when: false
+
+        - name: Start compose stack on ARMv6
+          ansible.builtin.command:
+            cmd: "docker-compose -f {{ deploy_dir }}/docker-compose.yml up -d --remove-orphans"
+          changed_when: true
+      when: ansible_architecture == 'armv6l'

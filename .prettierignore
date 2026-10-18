@@ -1,0 +1,11 @@
+node_modules/
+docusaurus/build/
+docusaurus/.docusaurus/
+**/package-lock.json
+*.tfstate*
+docusaurus/docs/network.md
+
+# Functional infra YAML: validated by `docker compose config` / ansible,
+# not prettier (reformatting risks breaking interpolation and compose specs)
+services/
+ansible/

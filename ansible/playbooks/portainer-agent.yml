@@ -1,0 +1,18 @@
+# Deploy Portainer agent on all Docker hosts and register each with Portainer.
+# Run after Portainer itself is up and after each host has Docker installed.
+#
+# Usage:
+#   ansible-playbook playbooks/portainer-agent.yml           # all docker_hosts
+#   ansible-playbook playbooks/portainer-agent.yml -l immich # single host
+#
+# Required vars (vault.yml):
+#   vault_portainer_user, vault_portainer_password
+---
+- name: Deploy Portainer agent
+  hosts: "{{ target | default('docker_hosts') }}"
+  become: true
+  vars_files:
+    - ../group_vars/all/vars.yml
+    - ../group_vars/all/vault.yml
+  roles:
+    - portainer-agent

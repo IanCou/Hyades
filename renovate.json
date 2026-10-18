@@ -1,0 +1,17 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "pinDigests": true,
+  "schedule": ["before 6am on monday"],
+  "prConcurrentLimit": 5,
+  "docker-compose": {
+    "fileMatch": ["services/.+/docker-compose\\.yml$"]
+  },
+  "packageRules": [
+    {
+      "matchManagers": ["docker-compose"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "container images (minor/patch)"
+    }
+  ]
+}

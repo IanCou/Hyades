@@ -1,0 +1,15 @@
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    restart: always
+    ports:
+      - "9090:9090"
+    volumes:
+      - /opt/services/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - /data/prometheus:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      # LXC root is 20 GB and an uncapped TSDB filled it (2026-10); cap by size too.
+      - --storage.tsdb.retention.size=12GB

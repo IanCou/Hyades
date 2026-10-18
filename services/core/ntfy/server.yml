@@ -1,0 +1,19 @@
+base-url: "https://ntfy.example.com"
+listen-http: ":80"
+
+# Auth: deny all by default, require login to publish/subscribe
+auth-file: "/var/lib/ntfy/user.db"
+auth-default-access: "deny-all"
+
+# Message cache: persist across restarts
+cache-file: "/var/cache/ntfy/cache.db"
+cache-duration: "24h"
+
+# Attachments
+attachment-cache-dir: "/var/cache/ntfy/attachments"
+attachment-total-size-limit: "1G"
+attachment-file-size-limit: "15M"
+
+# Metrics on a separate unauthenticated port for Prometheus
+metrics-enabled: true
+metrics-listen-http: ":9998"

@@ -1,0 +1,154 @@
+---
+# Migrate Coolify from test-services VM (vmid 300, node1) → coolify LXC (213, node3, 10.0.2.12)
+#
+# Prerequisites:
+#   1. terraform apply in terraform/envs/prod  (creates LXC 213)
+#   2. The new LXC must be reachable at 10.0.2.12
+#
+# Run:
+#   ansible-playbook playbooks/migrate-coolify.yml
+
+- name: Bootstrap coolify LXC with Docker
+  hosts: coolify
+  become: true
+  roles:
+    - docker
+
+- name: Install Coolify on new LXC
+  hosts: coolify
+  become: true
+  tasks:
+    - name: Run Coolify installer
+      ansible.builtin.shell: |
+        curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash
+      args:
+        creates: /data/coolify/source/.env
+
+    - name: Stop Coolify after fresh install (before data restore)
+      ansible.builtin.shell: |
+        docker stop coolify coolify-db coolify-redis coolify-realtime coolify-proxy 2>/dev/null || true
+      ignore_errors: true
+
+- name: Extract data from test-services via node1 hypervisor
+  hosts: node1
+  become: true
+  vars:
+    old_vm_id: 300
+  tasks:
+    - name: Stop Coolify app on test-services (keep postgres up for dump)
+      ansible.builtin.shell: |
+        qm guest exec {{ old_vm_id }} -- bash -c \
+          'cd /data/coolify/source && docker compose stop coolify coolify-realtime coolify-worker coolify-sentinel coolify-proxy 2>/dev/null; echo done' | \
+          python3 -c "import sys,json; print(json.load(sys.stdin)['out-data'])"
+
+    - name: Dump coolify-db postgres to /tmp on node1
+      ansible.builtin.shell: |
+        qm guest exec {{ old_vm_id }} -- bash -c \
+          'docker exec coolify-db pg_dump -U coolify coolify | base64 -w0' | \
+          python3 -c "import sys,json; print(json.load(sys.stdin)['out-data'])" | \
+          base64 -d > /tmp/coolify_postgres.sql
+      args:
+        creates: /tmp/coolify_postgres.sql
+
+    - name: Archive /data/coolify on test-services, stage on node1
+      ansible.builtin.shell: |
+        qm guest exec {{ old_vm_id }} -- bash -c \
+          'tar czf - -C / data/coolify --exclude=data/coolify/source/upgrade*.log | base64 -w0' | \
+          python3 -c "import sys,json; print(json.load(sys.stdin)['out-data'])" | \
+          base64 -d > /tmp/coolify_data.tar.gz
+      args:
+        creates: /tmp/coolify_data.tar.gz
+
+- name: Fetch staged files from node1 to controller
+  hosts: node1
+  become: true
+  tasks:
+    - name: Fetch postgres dump to controller
+      ansible.builtin.fetch:
+        src: /tmp/coolify_postgres.sql
+        dest: /tmp/coolify_postgres.sql
+        flat: true
+
+    - name: Fetch coolify data archive to controller
+      ansible.builtin.fetch:
+        src: /tmp/coolify_data.tar.gz
+        dest: /tmp/coolify_data.tar.gz
+        flat: true
+
+- name: Transfer and restore data on new coolify LXC
+  hosts: coolify
+  become: true
+  tasks:
+    - name: Copy postgres dump to coolify
+      ansible.builtin.copy:
+        src: /tmp/coolify_postgres.sql
+        dest: /tmp/coolify_postgres.sql
+        mode: "0600"
+
+    - name: Copy coolify data archive to coolify
+      ansible.builtin.copy:
+        src: /tmp/coolify_data.tar.gz
+        dest: /tmp/coolify_data.tar.gz
+        mode: "0600"
+
+    - name: Remove fresh /data/coolify (replaced by migrated data)
+      ansible.builtin.file:
+        path: /data/coolify
+        state: absent
+
+    - name: Restore /data/coolify from archive
+      ansible.builtin.shell: |
+        tar xzf /tmp/coolify_data.tar.gz -C /
+
+    - name: Start postgres volume container for restore
+      ansible.builtin.shell: |
+        docker run -d --name coolify-db-restore \
+          -e POSTGRES_USER=coolify \
+          -e POSTGRES_PASSWORD=$(grep DB_PASSWORD /data/coolify/source/.env | cut -d= -f2) \
+          -e POSTGRES_DB=coolify \
+          -v coolify-db:/var/lib/postgresql/data \
+          postgres:15-alpine
+
+    - name: Wait for postgres to be ready
+      ansible.builtin.shell: |
+        docker exec coolify-db-restore pg_isready -U coolify
+      register: pg_ready
+      retries: 15
+      delay: 3
+      until: pg_ready.rc == 0
+
+    - name: Drop and recreate database
+      ansible.builtin.shell: |
+        docker exec coolify-db-restore psql -U coolify -c "DROP DATABASE IF EXISTS coolify; CREATE DATABASE coolify;"
+
+    - name: Restore postgres dump
+      ansible.builtin.shell: |
+        docker exec -i coolify-db-restore psql -U coolify coolify < /tmp/coolify_postgres.sql
+
+    - name: Stop and remove restore container
+      ansible.builtin.shell: |
+        docker stop coolify-db-restore && docker rm coolify-db-restore
+
+    - name: Start Coolify
+      ansible.builtin.shell: |
+        cd /data/coolify/source && docker compose up -d
+
+    - name: Clean up temp files on new LXC
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/coolify_postgres.sql
+        - /tmp/coolify_data.tar.gz
+
+- name: Clean up temp files on node1
+  hosts: node1
+  become: true
+  tasks:
+    - name: Remove staged migration files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/coolify_postgres.sql
+        - /tmp/coolify_data.tar.gz

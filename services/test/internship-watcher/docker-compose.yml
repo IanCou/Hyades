@@ -1,0 +1,20 @@
+services:
+  internship-watcher:
+    image: ghcr.io/iancou/github-watcher:latest
+    container_name: internship-watcher
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - NTFY_TOKEN=${NTFY_TOKEN:-}
+      - DISCORD_WEBHOOK_ID=${DISCORD_WEBHOOK_ID:-}
+      - DISCORD_WEBHOOK_TOKEN=${DISCORD_WEBHOOK_TOKEN:-}
+      - DATABASE_URL=sqlite:////data/github-watcher.db
+      - LOG_LEVEL=INFO
+      - TZ=${TZ:-UTC}
+    volumes:
+      - gw-data:/data
+
+volumes:
+  gw-data:

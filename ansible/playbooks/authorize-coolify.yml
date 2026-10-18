@@ -1,0 +1,31 @@
+---
+# Adds Coolify's dedicated SSH public key to authorized_keys on appdev00 so
+# Coolify (10.0.2.12) can manage Docker there as a remote server.
+#
+# Scoped to appdev00 on purpose: this key exists only to let Coolify deploy the
+# People Portal staging stack. Coolify stores the matching private key in its
+# own database, so a Coolify compromise should not reach any other host.
+#
+# The from= restriction means the key is refused from anywhere but Coolify's
+# LXC. Coolify needs root to drive the Docker socket, so the command cannot be
+# restricted, but the source address can.
+#
+# Private key lives in secrets/coolify_appdev00_ed25519 (gitignored) and is
+# uploaded to Coolify, not distributed.
+#
+# Usage: ansible-playbook playbooks/authorize-coolify.yml
+- name: Authorize Coolify SSH key on appdev00
+  hosts: appdev00
+  gather_facts: false
+
+  vars:
+    coolify_host_ip: "10.0.2.12"
+    coolify_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF1KsrmDODANmDFeaE+prglpKyeetJEzUiavmxvzNKz3 coolify@10.0.2.12 -> appdev00"
+
+  tasks:
+    - name: Add Coolify key to authorized_keys
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ coolify_pubkey }}"
+        key_options: 'from="{{ coolify_host_ip }}"'
+        state: present

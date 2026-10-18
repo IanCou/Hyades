@@ -1,0 +1,57 @@
+name: Docs (GitHub Pages)
+
+# Builds the Docusaurus site and publishes it to GitHub Pages. Only runs on the
+# public Hyades repo: GitHub Pages isn't available for private repos on a free
+# account, and the private source repo deploys docs to its own host instead.
+
+on:
+  push:
+    branches: [main]
+    paths: ["docusaurus/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: docusaurus/package-lock.json
+
+      - name: Build site
+        working-directory: docusaurus
+        env:
+          DOCS_URL: https://hyades.iancoutinho.net
+          DOCS_BASE_URL: /
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docusaurus/build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

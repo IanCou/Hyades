@@ -1,0 +1,187 @@
+# Deploy the shared node_exporter stack to every docker host.
+#
+# node_exporter used to be copy-pasted into every service's docker-compose.yml
+# (network_mode: host, pid: host), easy to forget on a new service (n8n's
+# stack shipped without one), and a duplicated liability to audit N times
+# instead of once. This centralizes it: one compose file
+# (services/_shared/node-exporter/docker-compose.yml), deployed once per host,
+# independent of whatever service(s) that host runs.
+#
+# Idempotent: safe to re-run. Any prom/node-exporter container that is not part
+# of the shared `node-exporter` compose project (e.g. an old per-service one from
+# before this centralization) is removed first, whatever its tag. Then a
+# pre-flight check fails the run, naming the process, if anything else still
+# holds host port 9100. An orphaned caddy-node-exporter-1 held that port for
+# ~3 months (2026-10) and the shared stack crash-looped unnoticed.
+#
+# The Proxmox nodes get the Debian package instead (second play below): they
+# run no docker, and Prometheus's `proxmox` job had scraped them since day one
+# with nothing listening.
+#
+# Usage:
+#   ansible-playbook playbooks/node-exporter.yml               # docker hosts + Proxmox nodes
+#   ansible-playbook playbooks/node-exporter.yml -l immich     # one host
+#   ansible-playbook playbooks/node-exporter.yml -l proxmox_nodes
+---
+# `:!proxmox_nodes` keeps the docker path off the hypervisors even when
+# `-e target=` names one; the second play picks them up instead.
+- name: Deploy shared node_exporter
+  hosts: "{{ target | default('docker_hosts') }}:!proxmox_nodes"
+  become: true
+
+  vars:
+    repo_services_dir: "{{ playbook_dir }}/../../services"
+    deploy_dir: "/opt/services/node-exporter"
+
+  tasks:
+    # ARMv6 (the Pi Zero gateway): prom/node-exporter has no armv6 build and
+    # crash-loops with SIGILL (exit 132), so use the distro package there and
+    # skip the docker path below entirely (2026-10-18).
+    - name: Install node_exporter from apt on ARMv6
+      when: ansible_architecture == 'armv6l'
+      block:
+        - name: Stop the old docker node-exporter stack
+          ansible.builtin.command:
+            cmd: "docker-compose -f {{ deploy_dir }}/docker-compose.yml down"
+            removes: "{{ deploy_dir }}/docker-compose.yml"
+          failed_when: false
+
+        - name: Remove the old docker node-exporter directory
+          ansible.builtin.file:
+            path: "{{ deploy_dir }}"
+            state: absent
+
+        - name: Install prometheus-node-exporter
+          ansible.builtin.apt:
+            name: prometheus-node-exporter
+            state: present
+            update_cache: true
+
+        - name: Enable and start prometheus-node-exporter
+          ansible.builtin.systemd_service:
+            name: prometheus-node-exporter
+            enabled: true
+            state: started
+
+        - name: Skip the docker deployment on ARMv6
+          ansible.builtin.meta: end_host
+
+    # `--filter ancestor=prom/node-exporter:latest` (the old approach) missed
+    # other tags and also matched the shared container, so match on the image
+    # name prefix (2nd field) and the compose project label (last field)
+    # instead. A container with no compose label has an empty last field, so
+    # it counts as a stray too.
+    - name: List containers with their image and compose project
+      ansible.builtin.command:
+        argv:
+          - docker
+          - ps
+          - -a
+          - --format
+          - "{{ '{{.Names}}\t{{.Image}}\t{{.Label \"com.docker.compose.project\"}}' }}"
+      register: container_listing
+      changed_when: false
+
+    - name: Remove node-exporter containers outside the shared compose project
+      ansible.builtin.command:
+        argv: [docker, rm, -f, "{{ item }}"]
+      loop: >-
+        {{ container_listing.stdout_lines
+           | select('match', '[^\t]*\tprom/node-exporter')
+           | reject('search', '\tnode-exporter$')
+           | map('regex_replace', '\t.*$', '')
+           | list }}
+      changed_when: true
+
+    # Prints one line per listener on :9100 that is not the shared stack's
+    # node_exporter (matched by the container's host PID; it runs with
+    # network_mode: host, so ss reports that PID directly). Empty = clear.
+    - name: Find anything other than the shared node-exporter listening on 9100
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          {% raw %}
+          set -euo pipefail
+          shared_pids=$(docker ps -q --filter label=com.docker.compose.project=node-exporter \
+            | xargs -r docker inspect --format '{{.State.Pid}}')
+          container_pids=$(docker ps -q | xargs -r docker inspect --format '{{.State.Pid}} {{.Name}}')
+          ss -ltnp 'sport = :9100' | tail -n +2 | while IFS= read -r line; do
+            owners=$(grep -o '"[^"]*",pid=[0-9]*' <<<"$line" || true)
+            if [ -z "$owners" ]; then
+              echo "unknown process (ss shows no owner): $line"
+              continue
+            fi
+            while IFS= read -r owner; do
+              name=${owner%%\",pid=*}
+              name=${name#\"}
+              pid=${owner##*pid=}
+              if grep -qx "$pid" <<<"$shared_pids"; then
+                continue
+              fi
+              container=$(awk -v p="$pid" '$1 == p { sub(/^\//, "", $2); print $2 }' <<<"$container_pids")
+              echo "${name} (pid ${pid}${container:+, container ${container}})"
+            done <<<"$owners"
+          done | sort -u
+          {% endraw %}
+      register: port_9100_conflicts
+      changed_when: false
+
+    - name: Fail if host port 9100 is held by something other than the shared node-exporter
+      ansible.builtin.fail:
+        msg: >-
+          Host port 9100 on {{ inventory_hostname }} is already in use by
+          {{ port_9100_conflicts.stdout_lines | join('; ') }}. The shared
+          node-exporter stack cannot bind it and would crash-loop. Stop that
+          process or container (see `ss -ltnp 'sport = :9100'` and `docker ps -a`),
+          then re-run this playbook.
+      when: port_9100_conflicts.stdout_lines | length > 0
+
+    - name: Ensure deploy directory exists
+      ansible.builtin.file:
+        path: "{{ deploy_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Copy shared node-exporter docker-compose.yml
+      ansible.builtin.copy:
+        src: "{{ repo_services_dir }}/_shared/node-exporter/docker-compose.yml"
+        dest: "{{ deploy_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    - name: Pull and start node-exporter (Standard)
+      community.docker.docker_compose_v2:
+        project_src: "{{ deploy_dir }}"
+        state: present
+        pull: always
+        remove_orphans: true
+      when: ansible_architecture != 'armv6l'
+
+
+# Proxmox nodes: no docker on the hypervisors, so use the distro package, same
+# as the Pi above. The PVE firewall is disabled cluster-wide (pve-firewall
+# status on all three, 2026-10-18), so :9100 needs no rule for Prometheus at
+# 10.0.1.18. If the firewall is ever enabled, allow 9100/tcp from it.
+- name: Install node_exporter on the Proxmox nodes
+  hosts: "{{ target | default('proxmox_nodes') }}:&proxmox_nodes"
+  become: true
+
+  tasks:
+    # No Recommends: they pull in prometheus-node-exporter-collectors, ipmitool,
+    # openipmi and nvme-cli, and drag 14 base packages (util-linux, mount,
+    # login) to newer versions on a hypervisor mid-cycle. Upgrades there go
+    # through a deliberate `apt full-upgrade`, not a side effect of this.
+    - name: Install prometheus-node-exporter
+      ansible.builtin.apt:
+        name: prometheus-node-exporter
+        state: present
+        install_recommends: false
+        update_cache: true
+
+    # In --check the package is never really installed, so the unit doesn't
+    # exist yet and this task would fail on a first run.
+    - name: Enable and start prometheus-node-exporter
+      ansible.builtin.systemd_service:
+        name: prometheus-node-exporter
+        enabled: true
+        state: started
+      ignore_errors: "{{ ansible_check_mode }}"

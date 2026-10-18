@@ -1,0 +1,14 @@
+# Install cloudflared tunnel on the Coolify LXC so Coolify's Traefik handles
+# cert issuance and routing for Coolify-managed apps directly.
+# Requires vault_cloudflare_coolify_tunnel_token in group_vars/all/vault.yml.
+#
+# Usage:
+#   ansible-playbook playbooks/cloudflared-coolify.yml
+---
+- name: Set up cloudflared tunnel on Coolify LXC
+  hosts: coolify
+  become: true
+  roles:
+    - role: cloudflared
+      vars:
+        cloudflared_tunnel_token: "{{ vault_cloudflare_coolify_tunnel_token }}"

@@ -1,0 +1,63 @@
+# Deploy AdGuard Home on the adguard LXC.
+#
+# Handles the port-53 conflict with systemd-resolved (if present) before
+# bringing up the compose stack in host networking mode.
+#
+# Usage:
+#   ansible-playbook playbooks/adguard.yml
+---
+- name: Deploy AdGuard Home
+  hosts: adguard
+  become: true
+
+  vars:
+    repo_services_dir: "{{ playbook_dir }}/../../services"
+    deploy_dir: "/opt/services/{{ service }}"
+
+  tasks:
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+
+    - name: Stop and disable systemd-resolved (frees :53)
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: stopped
+        enabled: false
+      when:
+        - "'systemd-resolved.service' in ansible_facts.services"
+        - ansible_facts.services['systemd-resolved.service'].state == 'running'
+      register: resolved_disabled
+
+    - name: Remove resolv.conf symlink managed by systemd-resolved
+      ansible.builtin.file:
+        path: /etc/resolv.conf
+        state: absent
+      when: resolved_disabled is changed
+
+    - name: Write static /etc/resolv.conf
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        mode: "0644"
+        content: |
+          nameserver 1.1.1.1
+          nameserver 9.9.9.9
+      when: resolved_disabled is changed
+
+    - name: Ensure service directory exists
+      ansible.builtin.file:
+        path: "{{ deploy_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Copy docker-compose.yml
+      ansible.builtin.copy:
+        src: "{{ repo_services_dir }}/{{ tier }}/{{ service }}/docker-compose.yml"
+        dest: "{{ deploy_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    - name: Pull image and start stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ deploy_dir }}"
+        state: present
+        remove_orphans: true
+        pull: always

@@ -1,0 +1,34 @@
+# Post-provision config for the Tailscale LXC.
+# Runs on the Proxmox node (node1), not inside the LXC.
+# Must be run after `terraform apply` and before deploying Tailscale.
+#
+# Adds TUN device access to the LXC config, then reboots the container.
+#
+# Usage:
+#   ansible-playbook playbooks/tailscale-postprovision.yml
+---
+- name: Configure Tailscale LXC for TUN device
+  hosts: node1
+  become: true
+
+  vars:
+    lxc_id: 116
+    lxc_conf: "/etc/pve/lxc/{{ lxc_id }}.conf"
+
+  tasks:
+    - name: Allow TUN device access in LXC cgroup
+      ansible.builtin.lineinfile:
+        path: "{{ lxc_conf }}"
+        line: "lxc.cgroup2.devices.allow: c 10:200 rwm"
+        state: present
+
+    - name: Bind-mount TUN device into LXC
+      ansible.builtin.lineinfile:
+        path: "{{ lxc_conf }}"
+        line: "lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file"
+        state: present
+
+    - name: Reboot LXC to apply config
+      ansible.builtin.command:
+        cmd: "pct reboot {{ lxc_id }}"
+      changed_when: true

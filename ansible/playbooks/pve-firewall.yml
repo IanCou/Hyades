@@ -1,0 +1,120 @@
+---
+# Manual-only, staged Proxmox host firewall. This playbook is not referenced
+# by deploy.yml or CI. See ADR 0010 and the pve-firewall runbook before use.
+- name: Stage the Proxmox cluster host firewall
+  hosts: proxmox_nodes
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+
+  vars:
+    # Default off: cluster.fw receives `enable: 0` unless explicitly overridden.
+    pve_firewall_enable: false
+    # Default off: restrictive DROP rules are present but prefixed with `|`.
+    pve_firewall_enforce: false
+    # Add the operator's LAN workstation IP or DHCP reservation before setting
+    # enforce=true if SSH or the UI is ever opened directly from that source.
+    pve_firewall_extra_admin_sources: []
+
+    pve_firewall_ssh_sources:
+      - 10.0.1.13 # CI runner
+      - 10.0.1.22 # jump host
+      - 10.0.1.15 # primary Tailscale subnet router
+      - 10.0.0.3 # fallback Pi subnet router
+      - 10.0.0.10 # node1
+      - 10.0.0.11 # node2
+      - 10.0.0.12 # node3
+    # Everything that reaches :8006 today besides humans: Caddy proxies
+    # pve1-3.example.com to each node (services/core/caddy/Caddyfile),
+    # Uptime Kuma probes each node's UI (services/core/uptime-kuma/setup_monitors.py),
+    # and the runner may drive the bpg/proxmox Terraform provider. Terraform run
+    # from a LAN workstation needs that IP in pve_firewall_extra_admin_sources.
+    pve_firewall_ui_sources:
+      - 10.0.1.10 # Caddy reverse proxy (pve1-3 routes)
+      - 10.0.1.20 # Uptime Kuma (Proxmox PVE1-3 HTTP monitors)
+      - 10.0.1.13 # CI runner (Terraform API access)
+      - 10.0.1.15 # primary Tailscale subnet router
+      - 10.0.0.3 # fallback Pi subnet router
+      - 10.0.1.22 # jump host
+      - 10.0.0.10 # node1
+      - 10.0.0.11 # node2
+      - 10.0.0.12 # node3
+    pve_firewall_prometheus_sources:
+      - 10.0.1.18
+
+  tasks:
+    - name: Require explicit confirmation before touching cluster firewall state # noqa: run-once[task]
+      ansible.builtin.assert:
+        that:
+          - (pve_firewall_confirm | default('') | string) == 'yes'
+          - pve_firewall_extra_admin_sources is sequence
+          - pve_firewall_extra_admin_sources is not string
+        fail_msg: >-
+          Refusing to write cluster.fw. Re-run with
+          -e pve_firewall_confirm=yes after reading the pve-firewall runbook.
+      run_once: true
+
+    - name: Check whether cluster.fw already exists # noqa: run-once[task]
+      ansible.builtin.stat:
+        path: /etc/pve/firewall/cluster.fw
+      register: pve_cluster_firewall
+      run_once: true
+
+    - name: Get a timestamp for the backup filename # noqa: run-once[task]
+      ansible.builtin.command:
+        cmd: date -u +%Y%m%dT%H%M%SZ
+      register: pve_firewall_backup_timestamp
+      changed_when: false
+      when:
+        - not ansible_check_mode
+        - pve_cluster_firewall.stat.exists
+      run_once: true
+
+    - name: Create the firewall backup directory # noqa: run-once[task]
+      ansible.builtin.file:
+        path: /root/pve-firewall-backup
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      when:
+        - not ansible_check_mode
+        - pve_cluster_firewall.stat.exists
+      run_once: true
+
+    - name: Back up the current shared cluster firewall file # noqa: run-once[task]
+      ansible.builtin.command:
+        argv:
+          - cp
+          - /etc/pve/firewall/cluster.fw
+          - >-
+            /root/pve-firewall-backup/cluster.fw.{{
+            pve_firewall_backup_timestamp.stdout }}
+      changed_when: true
+      when:
+        - not ansible_check_mode
+        - pve_cluster_firewall.stat.exists
+      run_once: true
+
+    - name: Render the shared default-off cluster firewall policy # noqa: run-once[task]
+      ansible.builtin.template:
+        src: templates/pve-cluster.fw.j2
+        dest: /etc/pve/firewall/cluster.fw
+        mode: "0640"
+        unsafe_writes: true
+      register: pve_firewall_policy
+      run_once: true
+
+    - name: Compile and display the resulting Proxmox firewall ruleset # noqa: run-once[task]
+      ansible.builtin.command:
+        cmd: pve-firewall compile
+      register: pve_firewall_compile
+      changed_when: false
+      when: not ansible_check_mode
+      run_once: true
+
+    - name: Show the compiled Proxmox firewall ruleset # noqa: run-once[task]
+      ansible.builtin.debug:
+        var: pve_firewall_compile.stdout_lines
+      when: not ansible_check_mode
+      run_once: true

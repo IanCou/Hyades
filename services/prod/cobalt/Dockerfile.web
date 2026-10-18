@@ -1,0 +1,33 @@
+# Builds cobalt's official frontend (SvelteKit, static output) from source,
+# upstream ships no Docker image for it, only a Cloudflare Pages target
+# (web/wrangler.jsonc). @sveltejs/adapter-static means the build output is
+# plain static files, servable by any web server.
+FROM node:24-alpine AS build
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+WORKDIR /app
+
+RUN apk add --no-cache git python3 alpine-sdk
+RUN corepack enable
+
+# Pinned to the commit ghcr.io/imputnet/cobalt:11 (11.7.1) was built from, so
+# the frontend and API stay in lockstep instead of frontend drifting to
+# whatever's on main.
+ARG COBALT_COMMIT=a636575b09de1fc55d9b8cd98cac88f5f2f16b42
+RUN git init -q . \
+    && git remote add origin https://github.com/imputnet/cobalt.git \
+    && git fetch --depth 1 origin "${COBALT_COMMIT}" \
+    && git checkout -q FETCH_HEAD
+
+ARG WEB_DEFAULT_API
+ARG WEB_HOST
+ENV WEB_DEFAULT_API=${WEB_DEFAULT_API}
+ENV WEB_HOST=${WEB_HOST}
+
+RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
+    pnpm install --frozen-lockfile
+RUN pnpm --filter @imput/cobalt-web run build
+
+FROM nginx:alpine
+COPY --from=build /app/web/build /usr/share/nginx/html
+EXPOSE 80

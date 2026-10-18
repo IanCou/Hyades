@@ -1,0 +1,14 @@
+# Copy to vault.yml and encrypt with: ansible-vault encrypt vault.yml
+# Reference these vars in playbooks as vault_*
+vault_portainer_user: admin
+vault_portainer_password: your-portainer-password
+vault_github_pat: ghp_replace_me  # needs repo + workflow scopes
+vault_cloudflare_tunnel_token: eyJ...  # caddy LXC tunnel
+vault_cloudflare_coolify_tunnel_token: eyJ...  # coolify LXC tunnel
+vault_cloudflare_appdev00_tunnel_token: eyJ...  # appdev00 LXC tunnel (People Portal staging)
+vault_uptime_kuma_username: your-uptime-kuma-username  # for playbooks/uptime-kuma-monitors.yml
+vault_uptime_kuma_password: your-uptime-kuma-password  # for playbooks/uptime-kuma-monitors.yml
+vault_adguard_username: your-adguard-admin-username  # for playbooks/adguard-rewrites.yml
+vault_adguard_password: your-adguard-admin-password  # for playbooks/adguard-rewrites.yml
+vault_ntfy_username: your-ntfy-username  # for playbooks/audit-infra.yml and playbooks/uptime-kuma-monitors.yml
+vault_ntfy_password: your-ntfy-password  # for playbooks/audit-infra.yml and playbooks/uptime-kuma-monitors.yml

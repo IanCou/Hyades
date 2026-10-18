@@ -1,0 +1,18 @@
+---
+# Adds the github-runner's SSH public key to authorized_keys on all LXCs
+# so CI/CD can deploy to any host. Run once after provisioning new LXCs.
+#
+# Usage: ansible-playbook playbooks/authorize-runner.yml
+- name: Authorize github-runner SSH key on all hosts
+  hosts: all
+  gather_facts: false
+
+  vars:
+    runner_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBQ9Lani4xJzqBKSc3s9rsu0OdoiVGKyCF3oQPKUzOHE github-runner@homelab"
+
+  tasks:
+    - name: Add runner key to authorized_keys
+      authorized_key:
+        user: root
+        key: "{{ runner_pubkey }}"
+        state: present

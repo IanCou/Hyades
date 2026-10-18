@@ -1,0 +1,43 @@
+services:
+  cobalt:
+    image: ghcr.io/imputnet/cobalt:11
+    init: true
+    read_only: true
+    restart: unless-stopped
+    container_name: cobalt
+    ports:
+      - 9000:9000/tcp
+    environment:
+      API_URL: ${API_URL}
+    labels:
+      - com.centurylinklabs.watchtower.scope=cobalt
+
+  # Upstream ships no Docker image for the frontend (Cloudflare Pages is
+  # their deploy target); built from source, see Dockerfile.web. Not on
+  # watchtower's scope since it isn't a pulled image; redeploy via CI/deploy.yml
+  # to update.
+  cobalt-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        WEB_DEFAULT_API: ${WEB_DEFAULT_API}
+        WEB_HOST: ${WEB_HOST}
+    image: homelab/cobalt-web:latest
+    container_name: cobalt-web
+    restart: unless-stopped
+    ports:
+      - 8080:80/tcp
+
+  # Auto-updates the cobalt image; upstream's recommended way to stay current
+  # without a manual pull/redeploy per release. containrrr/watchtower is
+  # unmaintained and ships a Docker client too old for this host's Engine
+  # (API 1.25 vs the host's 1.55); nickfedor/watchtower is the maintained
+  # fork with a current client.
+  watchtower:
+    image: nickfedor/watchtower
+    container_name: cobalt-watchtower
+    restart: unless-stopped
+    command: --cleanup --scope cobalt --interval 900 --include-restarting
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

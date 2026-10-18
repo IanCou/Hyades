@@ -1,0 +1,35 @@
+# Sets up the GitHub Actions self-hosted runner LXC.
+# Run once after Terraform provisions the runner LXC.
+#
+# Usage:
+#   ansible-playbook playbooks/setup-runner.yml
+#
+# Required vars (in group_vars/all/vault.yml):
+#   vault_github_pat:   GitHub Personal Access Token with repo + workflow scope
+#
+# Required vars (in group_vars/all/vars.yml):
+#   github_repo:        e.g. "yourname/Homelab"
+---
+- name: Set up GitHub Actions runner
+  hosts: github-runner
+  become: true
+
+  vars_files:
+    - ../group_vars/all/vars.yml
+    - ../group_vars/all/vault.yml
+
+  roles:
+    - docker
+    - github-runner
+
+- name: Distribute runner pubkey to docker_hosts
+  hosts: docker_hosts
+  become: true
+  tasks:
+    - name: Authorize runner pubkey for root SSH
+      ansible.builtin.lineinfile:
+        path: /root/.ssh/authorized_keys
+        line: "{{ hostvars['github-runner']['runner_pubkey'] }}"
+        state: present
+        create: true
+        mode: "0600"

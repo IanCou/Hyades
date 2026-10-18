@@ -1,0 +1,41 @@
+# Managed by ansible/playbooks/pve-firewall.yml. Manual rollout only.
+[OPTIONS]
+
+enable: {{ 1 if pve_firewall_enable | bool else 0 }}
+policy_in: ACCEPT
+policy_out: ACCEPT
+
+[IPSET ssh_sources]
+
+{% for source in pve_firewall_ssh_sources + pve_firewall_extra_admin_sources %}
+{{ source }}
+{% endfor %}
+
+[IPSET pve_ui_sources]
+
+{% for source in pve_firewall_ui_sources + pve_firewall_extra_admin_sources %}
+{{ source }}
+{% endfor %}
+
+[IPSET prometheus]
+
+{% for source in pve_firewall_prometheus_sources %}
+{{ source }}
+{% endfor %}
+
+# Proxmox's built-in host-management rules consume this reserved IPSet.
+[IPSET management]
+
+{% for source in pve_firewall_ui_sources + pve_firewall_extra_admin_sources %}
+{{ source }}
+{% endfor %}
+
+[RULES]
+
+IN ACCEPT -source +ssh_sources -p tcp -dport 22
+IN ACCEPT -source +pve_ui_sources -p tcp -dport 8006
+IN ACCEPT -source +prometheus -p tcp -dport 9100
+{% set disabled = '' if pve_firewall_enforce | bool else '|' %}
+{{ disabled }}IN DROP -p tcp -dport 22 -log info
+{{ disabled }}IN DROP -p tcp -dport 8006 -log info
+{{ disabled }}IN DROP -p tcp -dport 9100 -log info

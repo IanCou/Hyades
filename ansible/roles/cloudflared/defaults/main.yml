@@ -1,0 +1,3 @@
+cloudflared_deb_url: "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb"
+# Override per-play; defaults to the caddy tunnel token for backwards-compat
+cloudflared_tunnel_token: "{{ vault_cloudflare_tunnel_token }}"

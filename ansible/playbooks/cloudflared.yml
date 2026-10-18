@@ -1,0 +1,11 @@
+# Install and configure cloudflared tunnel on the caddy LXC.
+# Requires vault_cloudflare_tunnel_token in group_vars/all/vault.yml.
+#
+# Usage:
+#   ansible-playbook playbooks/cloudflared.yml
+---
+- name: Set up cloudflared tunnel
+  hosts: caddy
+  become: true
+  roles:
+    - cloudflared

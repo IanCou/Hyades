@@ -1,0 +1,47 @@
+---
+# Sets up all Uptime Kuma monitors via the uptime-kuma-api Python wrapper.
+# Runs on localhost (your Mac/controller); needs network access to 10.0.1.20:3001.
+#
+# Usage:
+#   ansible-playbook playbooks/uptime-kuma-monitors.yml
+#   # Credentials come from vault_uptime_kuma_username / vault_uptime_kuma_password
+#   # and vault_ntfy_username / vault_ntfy_password in group_vars/all/vault.yml.
+#   # Extra vars such as -e uptime_kuma_password=... still override them.
+- name: Configure Uptime Kuma monitors
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../group_vars/all/vault.yml"
+    - "{{ playbook_dir }}/../group_vars/all/vars.yml"
+
+  vars:
+    uptime_kuma_url: "http://10.0.1.20:3001"
+    uptime_kuma_username: "{{ vault_uptime_kuma_username }}"
+    uptime_kuma_password: "{{ vault_uptime_kuma_password }}"
+    ntfy_username: "{{ vault_ntfy_username }}"
+    ntfy_password: "{{ vault_ntfy_password }}"
+    script_src: "{{ playbook_dir }}/../../services/core/uptime-kuma/setup_monitors.py"
+
+  tasks:
+    - name: Install uptime-kuma-api Python library
+      pip:
+        name: uptime-kuma-api
+        state: present
+
+    - name: Run monitor setup script
+      # ansible_playbook_python, not bare python3; the pip task above installs
+      # into ansible's own interpreter, which isn't necessarily first on $PATH.
+      # Credentials go via environment variables, not argv, to avoid ps and
+      # Ansible command-args error traces exposing passwords.
+      command: >
+        {{ ansible_playbook_python }} {{ script_src }}
+        --url {{ uptime_kuma_url }}
+      environment:
+        UPTIME_KUMA_USERNAME: "{{ uptime_kuma_username }}"
+        UPTIME_KUMA_PASSWORD: "{{ uptime_kuma_password }}"
+        NTFY_USERNAME: "{{ ntfy_username }}"
+        NTFY_PASSWORD: "{{ ntfy_password }}"
+      register: result
+      changed_when: "result.stdout is search('(?m)^  (add|update) ')"
+      no_log: true

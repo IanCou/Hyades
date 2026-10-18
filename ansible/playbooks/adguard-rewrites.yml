@@ -1,0 +1,52 @@
+# Reconciles AdGuard Home DNS rewrites against Terraform + Caddyfile via the
+# scripts/adguard_rewrites.py API wrapper; replaces hand-editing
+# AdGuardHome.yaml over SSH. Runs on localhost (your Mac/controller); needs
+# network access to 10.0.1.16:80. Never deletes a rewrite it didn't
+# create (manually-added entries like desktop.example.com are untouched).
+#
+# Usage:
+#   ansible-playbook playbooks/adguard-rewrites.yml -e adguard_password=<pass>
+#   ansible-playbook playbooks/adguard-rewrites.yml -e adguard_password=<pass> -e dry_run=true
+#   # or store vault_adguard_username / vault_adguard_password in group_vars/all/vault.yml
+---
+- name: Reconcile AdGuard Home DNS rewrites
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../group_vars/all/vault.yml"
+    - "{{ playbook_dir }}/../group_vars/all/vars.yml"
+
+  vars:
+    adguard_url: "http://10.0.1.16:80"
+    adguard_username: "{{ vault_adguard_username }}"
+    adguard_password: "{{ vault_adguard_password }}"
+    dry_run: false
+    script_src: "{{ playbook_dir }}/../../scripts/adguard_rewrites.py"
+
+  tasks:
+    - name: Install requests Python library
+      ansible.builtin.pip:
+        name: requests
+        state: present
+
+    - name: Run rewrite reconciliation script
+      # ansible_playbook_python, not bare python3; the pip task above installs
+      # into ansible's own interpreter, which isn't necessarily first on $PATH.
+      # Password via ADGUARD_PASSWORD env var, not --password; a CLI arg
+      # shows up in `ps`, shell history, and gets echoed verbatim into
+      # Ansible's own command-args error trace on any failure.
+      ansible.builtin.command: >
+        {{ ansible_playbook_python }} {{ script_src }}
+        --url {{ adguard_url }}
+        --username {{ adguard_username }}
+        {{ '--dry-run' if dry_run | bool else '' }}
+      environment:
+        ADGUARD_PASSWORD: "{{ adguard_password }}"
+      register: result
+      changed_when: "'add:' in result.stdout or 'update:' in result.stdout"
+      no_log: true
+
+    - name: Show output
+      ansible.builtin.debug:
+        msg: "{{ result.stdout_lines }}"

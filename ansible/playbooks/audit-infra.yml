@@ -1,0 +1,51 @@
+# Runs scripts/audit_infra.py, reconciles live infra state (QEMU VMs,
+# /opt/services/* on every docker host, node_exporter regressions) against
+# what git says it should be. Read-only. Runs on localhost (your Mac/
+# controller or the CI runner); needs SSH root access to every Proxmox node
+# and docker host, same as every other playbook here.
+#
+# Usage:
+#   ansible-playbook playbooks/audit-infra.yml
+#   ansible-playbook playbooks/audit-infra.yml -e ntfy_username=<u> -e ntfy_password=<p>
+#   ansible-playbook playbooks/audit-infra.yml -e audit_check=vms   # one check only
+#   # or store vault_ntfy_username / vault_ntfy_password in group_vars/all/vault.yml
+---
+- name: Audit live infra against git
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../group_vars/all/vault.yml"
+    - "{{ playbook_dir }}/../group_vars/all/vars.yml"
+
+  vars:
+    ntfy_username: "{{ vault_ntfy_username | default('') }}"
+    ntfy_password: "{{ vault_ntfy_password | default('') }}"
+    audit_check: ""
+    script_src: "{{ playbook_dir }}/../../scripts/audit_infra.py"
+
+  tasks:
+    - name: Install pyyaml
+      ansible.builtin.pip:
+        name: pyyaml
+        state: present
+
+    - name: Run infra audit
+      # ansible_playbook_python, not bare python3; the pip task above installs
+      # into ansible's own interpreter, which isn't necessarily what's first on
+      # $PATH (bit us in testing: pyyaml was "already satisfied" for ansible's
+      # bundled Python while the bare `python3` command still 404'd on import).
+      ansible.builtin.command: >
+        {{ ansible_playbook_python }} {{ script_src }}
+        {{ '--check ' + audit_check if audit_check else '' }}
+      environment:
+        NTFY_USERNAME: "{{ ntfy_username }}"
+        NTFY_PASSWORD: "{{ ntfy_password }}"
+      register: result
+      changed_when: false
+      failed_when: false  # non-zero just means drift found; report it, don't fail the play
+      no_log: true
+
+    - name: Show output
+      ansible.builtin.debug:
+        msg: "{{ result.stdout_lines }}"

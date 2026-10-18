@@ -1,0 +1,19 @@
+---
+# Adds the jump host's root SSH public key to authorized_keys on all LXCs
+# so `ssh -J root@jump.example.com root@<host>` works from anywhere.
+# Run once after provisioning jump, or whenever jump's key changes.
+#
+# Usage: ansible-playbook playbooks/authorize-jump.yml
+- name: Authorize jump SSH key on all hosts
+  hosts: all:!jump
+  gather_facts: false
+
+  vars:
+    jump_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFENd4+R273z9458PzJoXmliRS5kJlkz1YZO734YIWNu root@jump"
+
+  tasks:
+    - name: Add jump key to authorized_keys
+      authorized_key:
+        user: root
+        key: "{{ jump_pubkey }}"
+        state: present

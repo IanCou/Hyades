@@ -1,0 +1,4 @@
+# Non-sensitive vars shared across all hosts
+portainer_url: "https://10.0.1.12:9443"  # portainer LXC (LXC 113)
+github_repo: "IanCou/Hyades"               # TODO: your GitHub owner/repo
+runner_version: "2.323.0"

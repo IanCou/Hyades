@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Docs
+    url: https://docs.iancoutinho.net
+    about: Network layout, runbooks, and a page per service. Check here first.

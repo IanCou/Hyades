@@ -1,0 +1,19 @@
+{
+  "recommendations": [
+    "anthropic.claude-code",
+    "eamodio.gitlens",
+    "golang.go",
+    "hashicorp.terraform",
+    "redhat.ansible",
+    "redhat.vscode-yaml",
+    "ms-azuretools.vscode-docker",
+    "ms-azuretools.vscode-containers",
+    "ms-vscode.makefile-tools",
+    "ms-python.python",
+    "ms-python.debugpy",
+    "ms-python.vscode-python-envs",
+    "shd101wyy.markdown-preview-enhanced",
+    "llvm-vs-code-extensions.vscode-clangd",
+    "meta.pyrefly"
+  ]
+}

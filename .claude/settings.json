@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(terraform plan*)",
+      "Bash(openclaw config *)",
+      "Bash(tailscale status*)",
+      "Bash(dig *)",
+      "Bash(brew list *)"
+    ]
+  }
+}
