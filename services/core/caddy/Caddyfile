@@ -200,3 +200,4 @@ audiobookshelf.example.com {
 homeassistant.example.com {
 	reverse_proxy 10.0.2.22:8123
 }
+

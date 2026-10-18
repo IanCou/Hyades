@@ -1,0 +1,10 @@
+# Deployment template only. Set the private origin outside this public repo.
+# Replace the reserved DNS name with an operator-managed private origin.
+# Cloudflare Tunnel hostname membership is a separate external step.
+http://metrics.example.com, metrics.example.com {
+	@other_path not path /v1/overview.json
+	respond @other_path 404
+	@write not method GET HEAD OPTIONS
+	respond @write 405
+	reverse_proxy public-overview.internal.example:9080
+}

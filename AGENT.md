@@ -248,6 +248,14 @@ Changelog entries should cover: what changed, why, what files were touched, any 
 
 ---
 
+The public portfolio summary is a separate read-only collector in
+`services/core/prometheus/observability/`, deployed by `prometheus.yml`. Its
+`:9080/v1/overview.json` route exposes fixed aggregates only. Keep `:9090` and
+exporters private. See `docusaurus/docs/stack/public-observability.md` for the
+schema, metric scope, age limits, CORS, and the separate Tunnel setup step. The
+public snapshot includes a reserved-origin `Caddyfile.example`; install it with
+an operator-managed private origin before configuring the Tunnel hostname.
+
 ## Git conventions
 
 - **Branches**: use `feat/<short-description>` for new features; open a PR against `main`.
