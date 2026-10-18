@@ -5,8 +5,8 @@ sidebar_position: 46
 
 # Public observability
 
-The `example.com` domains and `10.0.0.0/22` addresses in this public snapshot are
-example configuration. Replace them with your own values before deployment.
+The example domains in this public snapshot are deployment placeholders. Configure
+your private origin outside the public repository before deployment.
 
 A cached, read-only portfolio endpoint backed by private Prometheus metrics and
 an explicit list of public HTTPS checks. The collector runs alongside Prometheus;
@@ -15,7 +15,13 @@ choose a query, upstream URL, host, monitor, or label.
 
 ## Endpoint and sources
 
-`GET https://metrics.example.com/v1/overview.json`
+`GET https://metrics.example.com/v1/overview.json` (deployment placeholder)
+
+`observability/Caddyfile.example` provides the exact public route with the reserved
+origin `public-overview.internal.example:9080`. The active public-repository
+Caddyfile and generated network table intentionally do not publish this route.
+Supply the actual private origin in operator-managed configuration, then install
+the route before configuring the external Tunnel hostname.
 
 The source is `services/core/prometheus/observability/overview.py`; deployment
 configuration is in `config.json` and the parent Compose stack. The background
@@ -101,7 +107,8 @@ this PR does not replace its illustrative HTML values.
    all be globally routable; the TLS connection is pinned to a checked address
    while verifying the original hostname. Redirects are not followed. No
    credentials or tokens should be put in these URLs.
-3. Review the plan, then deploy the two services from `ansible/`:
+3. Install the example Caddy route using your private origin, review the plan,
+   then deploy the two services from `ansible/`:
 
    ```bash
    ansible-playbook playbooks/prometheus.yml --check --diff
@@ -115,14 +122,13 @@ this PR does not replace its illustrative HTML values.
    read-only root filesystem, dropped capabilities, and resource limits. Port
    9080 is LAN-facing for Caddy; keep firewall access limited to the reverse proxy
    where host firewall rules are enabled. Prometheus's port 9090 stays private.
-4. On the private network, fetch `http://10.0.1.18:9080/v1/overview.json`.
+4. After replacing the reserved origin in operator-managed configuration, fetch `http://public-overview.internal.example:9080/v1/overview.json`.
    Confirm all three expected host exporters have a `/` filesystem series and
    compare the root-space definition with the hosts. Missing data must remain
    unavailable. `/healthz` only confirms the collector process is serving; it does
    not claim fresh upstream metrics and Caddy does not expose it publicly.
 5. **External step:** create the `metrics.example.com` public hostname in Cloudflare
-   Tunnel, pointing to the existing Caddy origin with that Host header. The repo's
-   Caddyfile does not create Tunnel hostname membership. Run the existing AdGuard
+   Tunnel, pointing to the existing Caddy origin with that Host header. The route template does not create Tunnel hostname membership. Run the existing AdGuard
    rewrite playbook if LAN split DNS is desired. Review existing Caddy prerequisites
    before deployment, including the Authentik providers used by other routes.
 6. Ensure Cloudflare/WAF/cache rules preserve `no-store` and `must-revalidate`;

@@ -2,7 +2,8 @@
 
 ## Public observability endpoint
 
-- Review/deploy the Prometheus collector and Caddy route; confirm all three host
+- Install `observability/Caddyfile.example` with an operator-managed private origin,
+  then review/deploy the Prometheus collector and route; confirm all three host
   exporters report root filesystem metrics before replacing the portfolio samples.
 - Add the metrics hostname to Cloudflare Tunnel separately, forwarding to Caddy
   with the matching Host header. Confirm WAF/cache policy preserves the response's
