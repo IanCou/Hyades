@@ -12,8 +12,12 @@ Config: [services/core/prometheus/](https://github.com/IanCou/Hyades/tree/main/s
 
 ## Access posture
 
-No public DNS or Caddy route; reach the UI directly at `http://10.0.1.18:9090` from
+The Prometheus UI/API has no public DNS or Caddy route; reach the UI directly at `http://10.0.1.18:9090` from
 the LAN/Tailscale.
+
+The separate [public observability collector](./public-observability.md) runs in
+this Compose stack on port `9080`. Caddy forwards only its fixed summary route;
+Prometheus's `9090` remains private.
 
 ## Deploy
 

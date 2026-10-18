@@ -37,6 +37,14 @@
         dest: "{{ deploy_dir }}/docker-compose.yml"
         mode: "0644"
 
+    - name: Copy public overview collector and configuration
+      ansible.builtin.copy:
+        src: "{{ service_src }}/observability/"
+        dest: "{{ deploy_dir }}/observability/"
+        mode: "0644"
+        directory_mode: "0755"
+      notify: Restart public overview collector
+
     # Ansible's temporary file is root-owned mode 0600, while the image runs as
     # nobody. Validate as root so an invalid render never replaces the live file.
     - name: Render and validate prometheus.yml
@@ -58,6 +66,19 @@
         pull: always
 
   handlers:
+    # Source/config are read-only bind mounts. Restart on changes so the running
+    # Python process reloads them even when Compose itself has not changed.
+    - name: Restart public overview collector
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ deploy_dir }}/docker-compose.yml"
+          - restart
+          - public-overview
+      changed_when: true
+
     # Updating a bind-mounted file does not make docker compose recreate the
     # container. SIGHUP is Prometheus's native reload and avoids exposing the
     # unauthenticated lifecycle endpoints on LAN-reachable port 9090.

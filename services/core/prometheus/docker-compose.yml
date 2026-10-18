@@ -13,3 +13,35 @@ services:
       - --storage.tsdb.retention.time=30d
       # LXC root is 20 GB and an uncapped TSDB filled it (2026-10); cap by size too.
       - --storage.tsdb.retention.size=12GB
+
+  # Serves cached aggregates only; never expose Prometheus's :9090 publicly.
+  public-overview:
+    image: python:3.13-slim-bookworm
+    restart: unless-stopped
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.25
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      PROMETHEUS_URL: http://prometheus:9090
+    volumes:
+      - ./observability:/app:ro
+    command: ["python", "/app/overview.py"]
+    ports:
+      - "9080:9080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9080/healthz', timeout=2)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"

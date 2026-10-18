@@ -1,5 +1,8 @@
 # Network Design
 
+This public snapshot uses example addresses in `10.0.0.0/22` and example service
+domains. Adapt them to your own network before deployment.
+
 All hosts sit in `10.0.0.0/22`; each tier occupies its own /24. LAN tier
 segmentation is by IP range only: every LXC's interface is actually `/22`
 (confirmed via `ip addr` on multiple hosts), not `/24`, and no firewall enforces the
@@ -121,6 +124,7 @@ Split DNS via AdGuard rewrites (`10.0.1.16`, backup on the Pi `.3`): `*.example.
 | auth | 10.0.1.11:9000 |
 | portainer | 10.0.1.12:9443 |
 | semaphore | 10.0.1.14:3000 |
+| metrics | 10.0.1.18:9080 |
 | grafana | 10.0.1.19:3000 |
 | uptime | 10.0.1.20:3001 |
 | ntfy | 10.0.1.21:80 |

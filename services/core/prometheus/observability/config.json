@@ -1,0 +1,18 @@
+{
+  "expectedNodes": 3,
+  "allowedOrigins": [
+    "https://portfolio.example.com"
+  ],
+  "checks": [
+    {
+      "id": "personal-site",
+      "name": "Personal site",
+      "url": "https://portfolio.example.com/"
+    },
+    {
+      "id": "hyades",
+      "name": "Hyades",
+      "url": "https://hyades.example.com/"
+    }
+  ]
+}
