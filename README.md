@@ -6,6 +6,8 @@
 ![Ansible](https://img.shields.io/badge/Ansible-config-EE0000?logo=ansible&logoColor=white)
 ![Docker Compose](https://img.shields.io/badge/Docker%20Compose-services-2496ED?logo=docker&logoColor=white)
 
+**Documentation:** [Hyades docs](https://hyades.iancoutinho.net)
+
 Infrastructure-as-code for Hyades, a self-hosted homelab: a 3-node Proxmox cluster provisioned
 **Terraform → Ansible → Docker Compose**, fronted by Caddy (TLS reverse proxy) and AdGuard (DNS).
 Mostly Docker workloads inside LXCs, with a couple of QEMU VMs (macOS, Windows) for things that
@@ -89,7 +91,7 @@ The full topology, generated from Terraform and the Caddyfile, is in
 - **Edge**: Caddy for automatic-HTTPS reverse proxy, AdGuard for DNS, Tailscale for remote access.
 - **Services**: Authentik (SSO), Immich, Nextcloud, Grafana + Prometheus, Uptime Kuma, ntfy,
   SearXNG, n8n, and more, grouped into `core` / `prod` / `test` environments.
-- **Docs**: a Docusaurus site at [`docs.iancoutinho.net`](https://docs.iancoutinho.net).
+- **Docs**: a Docusaurus site at [`hyades.iancoutinho.net`](https://hyades.iancoutinho.net).
 
 See [`AGENT.md`](AGENT.md) for the working source of truth on layout, workflow, and gotchas.
 
